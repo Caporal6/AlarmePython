@@ -75,7 +75,7 @@ def delete_alarm(index):
 # Création de la fenêtre principale
 root = tk.Tk()
 root.title("Horloge et Alarme")
-root.geometry("600x400")
+root.geometry("1000x800")
 root.configure(bg='black')
 
 # Affichage de l'heure
@@ -110,7 +110,7 @@ alarm_container = tk.Frame(root, bg="black")
 alarm_container.pack(side="right", fill="y", padx=10, pady=10)
 
 # Création du Canvas pour le scroll
-alarm_canvas = tk.Canvas(alarm_container, bg="black", width=180, height=200)
+alarm_canvas = tk.Canvas(alarm_container, bg="black", width=300, height=200)
 alarm_canvas.pack(side="left", fill="both", expand=True)
 
 # Scrollbar verticale
