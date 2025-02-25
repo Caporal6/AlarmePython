@@ -48,12 +48,15 @@ def set_alarm():
         
     if not actif:
         alarms.append(new_alarm)
+        alarms.sort(key=lambda x: x["time"])
         update_alarm_list()
 
 def update_alarm_list():
     """Met à jour l'affichage des alarmes avec une ScrollView."""
     for widget in alarm_list_frame.winfo_children():
         widget.destroy()  # Efface les anciennes alarmes avant de les recréer
+
+
 
     for i, alarm in enumerate(alarms):
         frame = tk.Frame(alarm_list_frame, bg="black")
@@ -75,7 +78,8 @@ def update_alarm_list():
         # Bouton pour supprimer l'alarme
         delete_btn = tk.Button(frame, text="🗑", command=lambda i=i: delete_alarm(i), width=3)
         delete_btn.pack(side="left", padx=5)
-
+    # Trier les alarmes par heure
+    alarms.sort(key=lambda x: x["time"])
     alarm_canvas.update_idletasks()  # Met à jour la ScrollView
     alarm_canvas.config(scrollregion=alarm_canvas.bbox("all"))  # Ajuste la zone de défilement
 
@@ -88,11 +92,13 @@ def edit_alarm(index):
     """Modifie l'heure d'une alarme."""
     new_time = f"{hour_spinbox.get()}:{minute_spinbox.get()}:{second_spinbox.get()}"
     alarms[index]["time"] = new_time
+    alarms.sort(key=lambda x: x["time"])
     update_alarm_list()
 
 def delete_alarm(index):
     """Supprime une alarme."""
     del alarms[index]
+    alarms.sort(key=lambda x: x["time"])
     update_alarm_list()
 
 def snooze_alarm():
