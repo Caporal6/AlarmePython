@@ -1,13 +1,5 @@
 import tkinter as tk
-import tkSnack
 import time
-from playsound import playsound
-
-# Path to the sound file
-sound_file = 't-rex-roar.mp3'
-
-# Play the sound file
-playsound(sound_file)
 
 # Liste pour stocker les alarmes
 alarms = []
@@ -19,21 +11,44 @@ def update_time():
     check_alarm(current_time)
     root.after(1000, update_time)  # Rafraîchit toutes les secondes
 
+alarm_active = False
+
 def check_alarm(current_time):
     """Vérifie si une alarme doit sonner."""
+    global alarm_active
     for alarm in alarms:
-        if alarm["active"] and alarm["time"] == current_time:
+        if alarm["active"] and alarm["time"] == current_time and not alarm_active:
             alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
+            snooze_button.pack(pady=10)  # Affiche le bouton Snooze
+            alarm_active = True
             return  # Affiche "YOUPIII" dès qu'une alarme est déclenchée
-    alarm_message.config(text="")  # Efface le message si aucune alarme ne sonne
+    if not alarm_active:
+        alarm_message.config(text="")  # Efface le message si aucune alarme ne sonne
+        snooze_button.pack_forget()  # Cache le bouton Snooze
+
+def snooze_alarm():
+    """Désactive le message d'alarme."""
+    global alarm_active
+    alarm_message.config(text="")
+    snooze_button.pack_forget()
+    alarm_active = False
 
 def set_alarm():
     """Ajoute une alarme avec l'heure sélectionnée."""
     alarm_time = f"{hour_spinbox.get()}:{minute_spinbox.get()}:{second_spinbox.get()}"
     
-    alarm = {"time": alarm_time, "active": True}
-    alarms.append(alarm)
-    update_alarm_list()
+    new_alarm = {"time": alarm_time, "active": True}
+    actif = False
+
+    # Regarder si l'alarme est déjà dans la liste 
+    # Si oui, on ne l'ajoute pas
+    for alarm in alarms:
+        if new_alarm == alarm:
+            actif = True
+        
+    if not actif:
+        alarms.append(new_alarm)
+        update_alarm_list()
 
 def update_alarm_list():
     """Met à jour l'affichage des alarmes avec une ScrollView."""
@@ -80,6 +95,11 @@ def delete_alarm(index):
     del alarms[index]
     update_alarm_list()
 
+def snooze_alarm():
+    """Désactive le message d'alarme."""
+    alarm_message.config(text="")
+    snooze_button.pack_forget()
+
 # Création de la fenêtre principale
 root = tk.Tk()
 root.title("Horloge et Alarme")
@@ -93,6 +113,9 @@ label.pack(expand=True)
 # Message d'alarme
 alarm_message = tk.Label(root, text="", font=('Helvetica', 20), fg='red', bg='black')
 alarm_message.pack(pady=10)
+
+# Bouton Snooze
+snooze_button = tk.Button(root, text="Snooze", command=snooze_alarm)
 
 # Section pour sélectionner une heure
 time_frame = tk.Frame(root, bg="black")
