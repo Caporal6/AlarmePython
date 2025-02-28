@@ -1,8 +1,14 @@
 import tkinter as tk
-import time
+import time 
+from gpiozero import LED, Button, Buzzer, DistanceSensor
 
 # Liste pour stocker les alarmes
 alarms = []
+
+#Declaration Buzzer 
+buzzer = Buzzer(18)
+
+
 
 def update_time():
     """Met à jour l'heure en temps réel."""
@@ -19,6 +25,7 @@ def check_alarm(current_time):
     for alarm in alarms:
         if alarm["active"] and alarm["time"] == current_time and not alarm_active:
             alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
+            buzzer.on()
             snooze_button.pack(pady=10)  # Affiche le bouton Snooze
             alarm_active = True
             return  # Affiche "YOUPIII" dès qu'une alarme est déclenchée
@@ -31,6 +38,7 @@ def snooze_alarm():
     global alarm_active
     alarm_message.config(text="")
     snooze_button.pack_forget()
+    buzzer.off()
     alarm_active = False
 
 def set_alarm():
@@ -100,10 +108,6 @@ def delete_alarm(index):
     
     update_alarm_list()
 
-def snooze_alarm():
-    """Désactive le message d'alarme."""
-    alarm_message.config(text="")
-    snooze_button.pack_forget()
 
 # Création de la fenêtre principale
 root = tk.Tk()
