@@ -1,12 +1,23 @@
 import tkinter as tk
 import time 
 from gpiozero import LED, Button, Buzzer, DistanceSensor
+import random
 
 # Liste pour stocker les alarmes
 alarms = []
 
 #Declaration Buzzer 
 buzzer = Buzzer(18)
+
+
+#Declaration Sensor
+ultrasonic = DistanceSensor(echo=19,trigger=4, max_distance=4)
+
+#Declaration boucle buzzer
+alarm_active = False
+
+
+
 
 
 
@@ -17,17 +28,20 @@ def update_time():
     check_alarm(current_time)
     root.after(1000, update_time)  # Rafraîchit toutes les secondes
 
-alarm_active = False
+
 
 def check_alarm(current_time):
     """Vérifie si une alarme doit sonner."""
-    global alarm_active
+    global alarm_active, distance_Prevue
     for alarm in alarms:
         if alarm["active"] and alarm["time"] == current_time and not alarm_active:
             alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
-            buzzer.on()
+            # buzzer.on()
             snooze_button.pack(pady=10)  # Affiche le bouton Snooze
             alarm_active = True
+            distance_Prevue = random.uniform(0.2, 2) * 100  # Initialiser distance_Prevue en cm
+            print(f"Distance prévue: {distance_Prevue:.2f} cm")
+            distance()  # Démarre la mise à jour de la distance
             return  # Affiche "YOUPIII" dès qu'une alarme est déclenchée
     if not alarm_active:
         alarm_message.config(text="")  # Efface le message si aucune alarme ne sonne
@@ -108,6 +122,20 @@ def delete_alarm(index):
     
     update_alarm_list()
 
+def distance():
+    global alarm_active
+    if alarm_active:
+        current_distance = ultrasonic.distance * 100  # Convertir en cm
+        if current_distance < distance_Prevue - 10 or current_distance > distance_Prevue + 10:
+            distance_label.config(text=f"Trop proche: {current_distance:.2f} cm")
+        elif current_distance > 200:
+            distance_label.config(text=f"Trop loin: {current_distance:.2f} cm")
+        else:
+            distance_label.config(text=f"Bravo, vous êtes à la bonne distance: {current_distance:.2f} cm")
+        root.after(1000, distance)  # Planifie la prochaine mise à jour dans 1 seconde
+
+
+
 
 # Création de la fenêtre principale
 root = tk.Tk()
@@ -115,9 +143,23 @@ root.title("Horloge et Alarme")
 root.geometry("1000x800")
 root.configure(bg='black')
 
-# Affichage de l'heure
-label = tk.Label(root, font=('Helvetica', 48), fg='white', bg='black')
-label.pack(expand=True)
+# Frame principale pour l'affichage de l'heure et les labels
+main_frame = tk.Frame(root, bg='black')
+main_frame.pack(expand=True, fill='both')
+
+# Frame pour les labels de gauche
+left_frame = tk.Frame(main_frame, bg='black')
+left_frame.pack(side='left', padx=10, pady=10)
+
+# Frame pour l'affichage de l'heure
+time_frame = tk.Frame(main_frame, bg='black')
+time_frame.pack(side='left', padx=10, pady=10)
+
+# Frame pour les labels de droite
+right_frame = tk.Frame(main_frame, bg='black')
+right_frame.pack(side='left', padx=10, pady=10)
+
+
 
 # Message d'alarme
 alarm_message = tk.Label(root, text="", font=('Helvetica', 20), fg='red', bg='black')
@@ -126,9 +168,27 @@ alarm_message.pack(pady=10)
 # Bouton Snooze
 snooze_button = tk.Button(root, text="Snooze", command=snooze_alarm)
 
-# Section pour sélectionner une heure
-time_frame = tk.Frame(root, bg="black")
-time_frame.pack(pady=5)
+# Labels à gauche de l'heure
+left_label1 = tk.Label(left_frame, text="Label Gauche 1", font=('Helvetica', 20), fg='white', bg='black')
+left_label1.pack(pady=5)
+
+left_label2 = tk.Label(left_frame, text="Label Gauche 2", font=('Helvetica', 20), fg='white', bg='black')
+left_label2.pack(pady=5)
+
+# Labels à droite de l'heure
+right_label1 = tk.Label(right_frame, text="Label Droite 1", font=('Helvetica', 20), fg='white', bg='black')
+right_label1.pack(pady=5)
+
+right_label2 = tk.Label(right_frame, text="Label Droite 2", font=('Helvetica', 20), fg='white', bg='black')
+right_label2.pack(pady=5)
+
+#label pour la distance
+distance_label = tk.Label(right_frame, text="Distance: ", font=('Helvetica', 20), fg='white', bg='black')
+distance_label.pack(pady=5)
+
+# Affichage de l'heure
+label = tk.Label(time_frame, font=('Helvetica', 48), fg='white', bg='black')
+label.pack(expand=True)
 
 # Sélecteurs pour les heures, minutes et secondes
 hour_spinbox = tk.Spinbox(time_frame, from_=0, to=23, width=3, format="%02.0f", wrap=True)
