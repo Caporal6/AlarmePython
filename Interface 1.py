@@ -10,6 +10,8 @@ alarms = []
 #Declaration Buzzer 
 buzzer = Buzzer(18)
 
+#Declaration LED
+led = LED(6)
 
 #Declaration Sensor
 ultrasonic = DistanceSensor(echo=19,trigger=4, max_distance=4)
@@ -39,6 +41,7 @@ def check_alarm(current_time):
     for alarm in alarms:
         if alarm["active"] and alarm["time"] == current_time and not alarm_active:
             alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
+            led.on()
             # buzzer.on()
             snooze_button.pack(pady=10)  # Affiche le bouton Snooze
             alarm_active = True
@@ -56,6 +59,7 @@ def snooze_alarm():
     alarm_message.config(text="")
     snooze_button.pack_forget()
     buzzer.off()
+    led.off()
     alarm_active = False
 
 def set_alarm():
