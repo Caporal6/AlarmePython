@@ -10,8 +10,6 @@ alarms = []
 #Declaration Buzzer 
 buzzer = Buzzer(18)
 
-#Declaration LED
-led = LED(6)
 
 #Declaration Sensor
 ultrasonic = DistanceSensor(echo=19,trigger=4, max_distance=4)
@@ -22,9 +20,9 @@ alarm_active = False
 #Declaration meteo et humidite
 DHTPin = 17
 
-# Ajoutez ces variables globales en haut du fichier
-distance_counter = 0
-distance_threshold = 3  # Temps en secondes à rester à la distance désirée
+
+
+
 
 def update_time():
     """Met à jour l'heure en temps réel."""
@@ -41,7 +39,6 @@ def check_alarm(current_time):
     for alarm in alarms:
         if alarm["active"] and alarm["time"] == current_time and not alarm_active:
             alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
-            led.on()
             # buzzer.on()
             snooze_button.pack(pady=10)  # Affiche le bouton Snooze
             alarm_active = True
@@ -59,7 +56,6 @@ def snooze_alarm():
     alarm_message.config(text="")
     snooze_button.pack_forget()
     buzzer.off()
-    led.off()
     alarm_active = False
 
 def set_alarm():
@@ -130,23 +126,19 @@ def delete_alarm(index):
     update_alarm_list()
 
 def distance():
-    global alarm_active, distance_counter
+    global alarm_active
     if alarm_active:
         current_distance = ultrasonic.distance * 100  # Convertir en cm
         if current_distance < distance_Prevue - 10 or current_distance > distance_Prevue + 10:
             distance_label.config(text=f"Trop proche: {current_distance:.2f} cm")
-            distance_counter = 0  # Réinitialiser le compteur si la distance n'est pas correcte
-        elif current_distance > 300:
+        elif current_distance > 200:
             distance_label.config(text=f"Trop loin: {current_distance:.2f} cm")
-            distance_counter = 0  # Réinitialiser le compteur si la distance n'est pas correcte
         else:
             distance_label.config(text=f"Bravo, vous êtes à la bonne distance: {current_distance:.2f} cm")
-            distance_counter += 1  # Incrémenter le compteur si la distance est correcte
-            if distance_counter >= distance_threshold:
-                distance_label.config(text="Distance: ")
-                snooze_alarm()  # Activer le bouton Snooze après 3 secondes
-                return  # Sortir de la fonction pour arrêter la mise à jour de la distance
         root.after(1000, distance)  # Planifie la prochaine mise à jour dans 1 seconde
+
+
+
 
 def loop():
 	dht = DHT.DHT(DHTPin)
@@ -175,16 +167,9 @@ def update_weather():
     if chk == 0:
         humidity = dht.getHumidity()
         temperature = dht.getTemperature()
-        if humidity is not None and temperature is not None:
-            left_label1.config(text=f"Humidité: {humidity:.2f}%")
-            right_label1.config(text=f"Température: {temperature:.2f}°C")
-        else:
-            left_label1.config(text="Erreur de lecture DHT11")
-            right_label1.config(text="Erreur de lecture DHT11")
-    else:
-        left_label1.config(text="Humidité: Erreur")
-        right_label1.config(text="Température: Erreur")
-    root.after(1000, update_weather)  # Rafraîchit toutes les minutes
+        left_label1.config(text=f"Humidité: {humidity:.2f}%")
+        left_label2.config(text=f"Température: {temperature:.2f}°C")
+    root.after(60000, update_weather)  # Rafraîchit toutes les minutes
 
 # Création de la fenêtre principale
 root = tk.Tk()
@@ -221,15 +206,15 @@ snooze_button = tk.Button(root, text="Snooze", command=snooze_alarm)
 left_label1 = tk.Label(left_frame, text="Humidité: ", font=('Helvetica', 20), fg='white', bg='black')
 left_label1.pack(pady=5)
 
-#left_label2 = tk.Label(left_frame, text="Température: ", font=('Helvetica', 20), fg='white', bg='black')
-#left_label2.pack(pady=5)
+left_label2 = tk.Label(left_frame, text="Température: ", font=('Helvetica', 20), fg='white', bg='black')
+left_label2.pack(pady=5)
 
 # Labels à droite de l'heure
 right_label1 = tk.Label(right_frame, text="Label Droite 1", font=('Helvetica', 20), fg='white', bg='black')
 right_label1.pack(pady=5)
 
-#right_label2 = tk.Label(right_frame, text="Label Droite 2", font=('Helvetica', 20), fg='white', bg='black')
-#right_label2.pack(pady=5)
+right_label2 = tk.Label(right_frame, text="Label Droite 2", font=('Helvetica', 20), fg='white', bg='black')
+right_label2.pack(pady=5)
 
 #label pour la distance
 distance_label = tk.Label(right_frame, text="Distance: ", font=('Helvetica', 20), fg='white', bg='black')
