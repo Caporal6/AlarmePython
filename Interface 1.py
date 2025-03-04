@@ -139,6 +139,7 @@ def distance():
             distance_label.config(text=f"Bravo, vous êtes à la bonne distance: {current_distance:.2f} cm")
             distance_counter += 1  # Incrémenter le compteur si la distance est correcte
             if distance_counter >= distance_threshold:
+                distance_label.config(text="Distance: ")
                 snooze_alarm()  # Activer le bouton Snooze après 3 secondes
                 return  # Sortir de la fonction pour arrêter la mise à jour de la distance
         root.after(1000, distance)  # Planifie la prochaine mise à jour dans 1 seconde
