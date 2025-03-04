@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Alarm Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Alarm Controller</h1>
+        </header>
+        
+        <div class="control-panel">
+            <button id="startBtn" class="btn btn-primary">Démarrer</button>
+            <button id="stopBtn" class="btn btn-danger" disabled>Arrêter</button>
+        </div>
+        
+        <div class="status-panel">
+            <p>Status: <span id="status">Arrêté</span></p>
+        </div>
+        
+        <div class="alarm-panel">
+            <h2>Configurer une alarme</h2>
+            <div class="time-selector">
+                <select id="hourSelect"></select>
+                <span>:</span>
+                <select id="minuteSelect"></select>
+                <span>:</span>
+                <select id="secondSelect"></select>
+                <button id="addAlarmBtn" class="btn btn-primary">Ajouter</button>
+            </div>
+            
+            <div class="alarm-list">
+                <h3>Alarmes configurées</h3>
+                <table id="alarmTable">
+                    <thead>
+                        <tr>
+                            <th>Heure</th>
+                            <th>Statut</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alarmList">
+                        <!-- Alarms will appear here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="output-panel">
+            <h2>Sortie du programme</h2>
+            <div class="output-container">
+                <pre id="output"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
