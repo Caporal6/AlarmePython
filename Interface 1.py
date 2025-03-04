@@ -2,6 +2,7 @@ import tkinter as tk
 import time 
 from gpiozero import LED, Button, Buzzer, DistanceSensor
 import random
+import Freenove_DHT as DHT
 
 # Liste pour stocker les alarmes
 alarms = []
@@ -16,6 +17,8 @@ ultrasonic = DistanceSensor(echo=19,trigger=4, max_distance=4)
 #Declaration boucle buzzer
 alarm_active = False
 
+#Declaration meteo et humidite
+DHTPin = 17
 
 
 
@@ -41,6 +44,7 @@ def check_alarm(current_time):
             alarm_active = True
             distance_Prevue = random.uniform(0.2, 2) * 100  # Initialiser distance_Prevue en cm
             print(f"Distance prévue: {distance_Prevue:.2f} cm")
+            loop()
             distance()  # Démarre la mise à jour de la distance
             return  # Affiche "YOUPIII" dès qu'une alarme est déclenchée
     if not alarm_active:
@@ -137,6 +141,37 @@ def distance():
 
 
 
+def loop():
+	dht = DHT.DHT(DHTPin)
+	#create a DHT class object
+	counts = 0 # Measurement counts
+
+	while(True):
+		counts += 1
+		print("Measurement counts: ", counts)
+		for i in range(0,15):
+			chk = dht.readDHT11()
+	#read DHT11 and get a return value. Then determine
+			if (chk == 0):
+	#read DHT11 and get a return value. Then determine
+				print("DHT11,OK!")
+				break
+			time.sleep(0.1)
+
+		print("Humidity : %.2f, \t Temperature : %.2f \n"%( dht.getHumidity(),
+dht.getTemperature()))
+
+def update_weather():
+    """Met à jour l'humidité et la température toutes les minutes."""
+    dht = DHT.DHT(DHTPin)
+    chk = dht.readDHT11()
+    if chk == 0:
+        humidity = dht.getHumidity()
+        temperature = dht.getTemperature()
+        left_label1.config(text=f"Humidité: {humidity:.2f}%")
+        left_label2.config(text=f"Température: {temperature:.2f}°C")
+    root.after(60000, update_weather)  # Rafraîchit toutes les minutes
+
 # Création de la fenêtre principale
 root = tk.Tk()
 root.title("Horloge et Alarme")
@@ -169,10 +204,10 @@ alarm_message.pack(pady=10)
 snooze_button = tk.Button(root, text="Snooze", command=snooze_alarm)
 
 # Labels à gauche de l'heure
-left_label1 = tk.Label(left_frame, text="Label Gauche 1", font=('Helvetica', 20), fg='white', bg='black')
+left_label1 = tk.Label(left_frame, text="Humidité: ", font=('Helvetica', 20), fg='white', bg='black')
 left_label1.pack(pady=5)
 
-left_label2 = tk.Label(left_frame, text="Label Gauche 2", font=('Helvetica', 20), fg='white', bg='black')
+left_label2 = tk.Label(left_frame, text="Température: ", font=('Helvetica', 20), fg='white', bg='black')
 left_label2.pack(pady=5)
 
 # Labels à droite de l'heure
@@ -224,8 +259,9 @@ alarm_canvas.configure(yscrollcommand=scrollbar.set)
 alarm_list_frame = tk.Frame(alarm_canvas, bg="black")
 alarm_canvas.create_window((0, 0), window=alarm_list_frame, anchor="nw")
 
-# Démarrer la mise à jour de l'horloge
+# Démarrer la mise à jour de l'horloge et de la météo
 update_time()
+update_weather()
 
 # Lancer l'application
 root.mainloop()
