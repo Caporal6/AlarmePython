@@ -46,18 +46,44 @@ def load_alarms():
     global alarms
     try:
         if os.path.exists(ALARMS_FILE):
+            # Force sync to ensure we're reading the latest version
+            os.sync()
             with open(ALARMS_FILE, 'r') as f:
-                alarms = json.load(f)
+                loaded_alarms = json.load(f)
+                # Validate the structure before replacing
+                for alarm in loaded_alarms:
+                    if "time" not in alarm or "active" not in alarm:
+                        print(f"Warning: Invalid alarm format: {alarm}")
+                        continue
+                
+                # Update the global alarms list
+                alarms = loaded_alarms
                 print(f"Loaded {len(alarms)} alarms from file")
+                return True
     except Exception as e:
         print(f"Error loading alarms: {e}")
+        return False
 
 # Save alarms to file
 def save_alarms():
+    """Save alarms to file with proper flushing to ensure file modification is detected"""
     try:
-        with open(ALARMS_FILE, 'w') as f:
+        # Create a temporary file and then rename it to ensure atomic write
+        temp_file = ALARMS_FILE + ".tmp"
+        with open(temp_file, 'w') as f:
             json.dump(alarms, f)
-            print(f"Saved {len(alarms)} alarms to file")
+            f.flush()  # Flush internal Python buffers
+            os.fsync(f.fileno())  # Flush OS buffers to disk
+        
+        # Rename is atomic on POSIX systems
+        os.rename(temp_file, ALARMS_FILE)
+        
+        # Force sync the directory to ensure rename is committed
+        dir_fd = os.open(os.path.dirname(ALARMS_FILE) or '.', os.O_DIRECTORY)
+        os.fsync(dir_fd)
+        os.close(dir_fd)
+        
+        print(f"Saved {len(alarms)} alarms to file")
     except Exception as e:
         print(f"Error saving alarms: {e}")
 
@@ -82,11 +108,18 @@ def update_time():
 def check_alarm(current_time):
     """Vérifie si une alarme doit sonner."""
     global alarm_active
+    
+    # Check if we're running in GUI mode and if snooze_button exists
+    has_snooze_button = 'snooze_button' in globals() if not WEB_MODE else False
+    
     for alarm in alarms:
         if alarm["active"] and alarm["time"] == current_time and not alarm_active:
             if not WEB_MODE:
                 alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
-                snooze_button.pack(pady=10)  # Affiche le bouton Snooze
+                
+                # Only use snooze_button if it exists
+                if has_snooze_button:
+                    snooze_button.pack(pady=10)  # Affiche le bouton Snooze
             else:
                 print(f"🔔 ALARM TRIGGERED: {alarm['time']}")
             
@@ -99,7 +132,10 @@ def check_alarm(current_time):
     if not alarm_active:
         if not WEB_MODE:
             alarm_message.config(text="")  # Efface le message si aucune alarme ne sonne
-            snooze_button.pack_forget()  # Cache le bouton Snooze
+            
+            # Only hide snooze_button if it exists
+            if has_snooze_button:
+                snooze_button.pack_forget()  # Cache le bouton Snooze
 
 def snooze_alarm():
     """Désactive le message d'alarme."""
@@ -137,7 +173,7 @@ def set_alarm(hour, minute, second):
         print(f"New alarm set for {alarm_time}")
         save_alarms()
         if not WEB_MODE:
-            update_alarm_list()
+            styled_update_alarm_list()
         return True
     else:
         print(f"Alarm for {alarm_time} already exists")
@@ -186,7 +222,7 @@ def toggle_alarm(index):
     save_alarms()
     
     if not WEB_MODE:
-        update_alarm_list()
+        styled_update_alarm_list()
     return status
 
 def edit_alarm(index, hour=None, minute=None, second=None):
@@ -202,7 +238,7 @@ def edit_alarm(index, hour=None, minute=None, second=None):
     save_alarms()
     
     if not WEB_MODE:
-        update_alarm_list()
+        styled_update_alarm_list()
     return new_time
 
 def delete_alarm(index):
@@ -213,16 +249,110 @@ def delete_alarm(index):
     save_alarms()
     
     if not WEB_MODE:
-        update_alarm_list()
+        styled_update_alarm_list()
     return True
 
 class AlarmFileHandler(FileSystemEventHandler):
     def on_modified(self, event):
         if event.src_path.endswith(ALARMS_FILE):
             print(f"Detected changes to {ALARMS_FILE}")
-            load_alarms()
-            if not WEB_MODE:
-                update_alarm_list()
+            # Use a slight delay to ensure the file is completely written
+            time.sleep(0.1)
+            force_refresh()
+
+def styled_update_alarm_list():
+    """Met à jour l'affichage des alarmes avec une ScrollView."""
+    if WEB_MODE:
+        return
+        
+    alarms.sort(key=lambda x: x["time"])
+    for widget in alarm_list_frame.winfo_children():
+        widget.destroy()  # Efface les anciennes alarmes avant de les recréer
+
+    if not alarms:
+        # Show a message when no alarms are set
+        no_alarms = tk.Label(alarm_list_frame, text="No alarms set", 
+                           font=text_font, fg="#888888", bg=CARD_BG)
+        no_alarms.pack(pady=20)
+        return
+
+    for i, alarm in enumerate(alarms):
+        # Create a more compact card-like frame for each alarm
+        card = tk.Frame(alarm_list_frame, bg=BG_COLOR, padx=5, pady=5)  # Reduced padding
+        card.pack(fill="x", pady=3, padx=3)  # Reduced padding
+        
+        # Top row with time and toggle
+        top_row = tk.Frame(card, bg=BG_COLOR)
+        top_row.pack(fill="x", expand=True)
+
+        # Affichage de l'heure de l'alarme
+        label = tk.Label(top_row, text=alarm["time"], font=text_font, 
+                       fg=TEXT_COLOR, bg=BG_COLOR)
+        label.pack(side="left")
+
+        # Spacer to push toggle button to the right
+        tk.Frame(top_row, bg=BG_COLOR).pack(side="left", fill="x", expand=True)
+
+        # Toggle button with custom style
+        toggle_color = SUCCESS_COLOR if alarm["active"] else "#555555"
+        state_text = "ON" if alarm["active"] else "OFF"
+        state_btn = tk.Button(
+            top_row, 
+            text=state_text, 
+            command=lambda i=i: toggle_alarm(i),
+            font=button_font,
+            bg=toggle_color,
+            fg=TEXT_COLOR,
+            width=6,
+            relief=tk.FLAT,
+            borderwidth=0
+        )
+        state_btn.pack(side="right", padx=5)
+
+        # Bottom row with edit and delete buttons
+        bottom_row = tk.Frame(card, bg=BG_COLOR)
+        bottom_row.pack(fill="x", pady=(10, 0))
+        
+        # Spacer to push buttons to the right
+        tk.Frame(bottom_row, bg=BG_COLOR).pack(side="left", fill="x", expand=True)
+
+        # Action buttons with better styling
+        edit_btn = tk.Button(
+            bottom_row, 
+            text="✏️ Edit", 
+            command=lambda i=i: edit_alarm(i),
+            font=button_font,
+            bg=ACCENT_COLOR,
+            fg=TEXT_COLOR,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=10
+        )
+        edit_btn.pack(side="left", padx=5)
+
+        # Bouton pour supprimer l'alarme
+        delete_btn = tk.Button(
+            bottom_row, 
+            text="🗑️ Delete", 
+            command=lambda i=i: delete_alarm(i),
+            font=button_font,
+            bg=DANGER_COLOR,
+            fg=TEXT_COLOR,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=10
+        )
+        delete_btn.pack(side="left", padx=5)
+    
+    # Ajuste la zone de défilement
+    alarm_canvas.update_idletasks()
+
+def force_refresh():
+    """Force refresh alarms from file and update UI"""
+    success = load_alarms()
+    if success and not WEB_MODE:
+        styled_update_alarm_list()
+    return success
 
 def run_gui_mode():
     global root, label, alarm_message, snooze_button, hour_spinbox, minute_spinbox
@@ -245,83 +375,95 @@ def run_gui_mode():
     # Création de la fenêtre principale
     root = tk.Tk()
     root.title("Horloge et Alarme")
-    root.geometry("800x480")
+    
+    # Account for taskbar by making the window slightly smaller than 800x450
+    root.geometry("800x450")  # 30 pixels for taskbar
+    
+    # Set the window to fullscreen but account for taskbar
+    # Uncomment one of these approaches:
+    # 1. No decorations but not true fullscreen (keeps taskbar visible)
+    root.attributes('-type', 'dock')  # For Linux/X11
+    
+    # 2. Alternative method for Raspberry Pi
+    # root.overrideredirect(True)  # Remove window decorations
+    # root.geometry("{0}x{1}+0+0".format(root.winfo_screenwidth(), root.winfo_screenheight() - 30))
+    
     root.configure(bg=BG_COLOR)
     
-    # Custom font styles
-    title_font = ('Helvetica', 48, 'bold')
-    subtitle_font = ('Helvetica', 24)
+    # Make more compact layout
+    # Custom font styles - slightly smaller
+    title_font = ('Helvetica', 42, 'bold')  # Reduced from 48
+    subtitle_font = ('Helvetica', 20)       # Reduced from 24
     button_font = ('Helvetica', 10, 'bold')
     text_font = ('Helvetica', 12)
     
-    # Main layout with two columns
+    # Main layout with two columns - adjust padding
     left_frame = tk.Frame(root, bg=BG_COLOR)
-    left_frame.pack(side="left", fill="both", expand=True, padx=20, pady=20)
+    left_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)  # Reduced padding
     
     right_frame = tk.Frame(root, bg=BG_COLOR)
-    right_frame.pack(side="right", fill="both", padx=20, pady=20)
+    right_frame.pack(side="right", fill="both", padx=10, pady=10)  # Reduced padding
     
     # Clock frame with gradient-like effect
-    clock_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=15, 
+    clock_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=10,  # Reduced padding
                           highlightbackground=ACCENT_COLOR, highlightthickness=2)
-    clock_frame.pack(fill="x", pady=(0, 20))
+    clock_frame.pack(fill="x", pady=(0, 10))  # Reduced bottom padding from 20 to 10
     
     # Title for clock section
     clock_title = tk.Label(clock_frame, text="Current Time", font=subtitle_font, 
                           fg=ACCENT_COLOR, bg=CARD_BG)
-    clock_title.pack(pady=(0, 10))
+    clock_title.pack(pady=(0, 5))  # Reduced padding from 10 to 5
 
     # Affichage de l'heure
     label = tk.Label(clock_frame, font=title_font, fg=TEXT_COLOR, bg=CARD_BG)
-    label.pack(pady=10)
+    label.pack(pady=5)  # Reduced padding from 10 to 5
 
     # Message d'alarme container
     alarm_frame = tk.Frame(left_frame, bg=BG_COLOR)
-    alarm_frame.pack(fill="x", pady=10)
+    alarm_frame.pack(fill="x", pady=5)  # Reduced padding from 10 to 5
     
     # Message d'alarme
     alarm_message = tk.Label(alarm_frame, text="", font=subtitle_font, fg=DANGER_COLOR, bg=BG_COLOR)
-    alarm_message.pack(pady=5)
-
-    # Bouton Snooze with custom style
+    alarm_message.pack(pady=2)  # Reduced padding from 5 to 2
+    
+    # Create the snooze button early so it's available to check_alarm
     snooze_button = tk.Button(
-        alarm_frame, 
-        text="SNOOZE", 
+        alarm_frame,
+        text="SNOOZE",
         command=snooze_alarm,
         font=button_font,
         bg=DANGER_COLOR,
         fg=TEXT_COLOR,
-        activebackground="#A03A45",  # Darker shade for pressed state
-        activeforeground=TEXT_COLOR,
-        relief=tk.FLAT,
         padx=20,
-        pady=10,
-        borderwidth=0
+        pady=5
     )
-    # Not packed initially - will be shown when alarm triggers
-    
+    # Don't pack it initially - it will be shown when an alarm triggers
+
     # Add new alarm section
-    add_alarm_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=15)
-    add_alarm_frame.pack(fill="x", pady=10)
+    add_alarm_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=10)  # Reduced vertical padding
+    add_alarm_frame.pack(fill="x", pady=5)  # Reduced padding from 10 to 5
     
     # Title for add alarm section
     add_title = tk.Label(add_alarm_frame, text="Set New Alarm", font=subtitle_font, 
                         fg=ACCENT_COLOR, bg=CARD_BG)
-    add_title.pack(pady=(0, 15))
+    add_title.pack(pady=(0, 10))  # Reduced padding from 15 to 10
 
     # Section pour sélectionner une heure
     time_frame = tk.Frame(add_alarm_frame, bg=CARD_BG)
-    time_frame.pack(pady=5)
+    time_frame.pack(pady=5)  # Reduced padding from 10 to 5
 
-    # Style for spinboxes
+    # Style for spinboxes with integrated up/down buttons
     spinbox_style = {
-        'width': 3, 
+        'width': 3,
         'format': "%02.0f", 
         'wrap': True,
         'bg': BG_COLOR,
         'fg': TEXT_COLOR,
         'buttonbackground': ACCENT_COLOR,
-        'font': text_font
+        'font': ('Helvetica', 24, 'bold'),
+        'justify': 'center',
+        'bd': 2,
+        'relief': tk.RIDGE,
     }
 
     # Sélecteurs pour les heures, minutes et secondes
@@ -329,45 +471,74 @@ def run_gui_mode():
     minute_spinbox = tk.Spinbox(time_frame, from_=0, to=59, **spinbox_style)
     second_spinbox = tk.Spinbox(time_frame, from_=0, to=59, **spinbox_style)
 
-    # Add more padding and style between spinboxes
-    hour_spinbox.pack(side="left", padx=5)
-    separator1 = tk.Label(time_frame, text=":", font=title_font, bg=CARD_BG, fg=TEXT_COLOR)
+    # Add more padding and larger separators between spinboxes
+    hour_spinbox.pack(side="left", padx=8)
+    separator1 = tk.Label(time_frame, text=":", font=('Helvetica', 32, 'bold'), bg=CARD_BG, fg=TEXT_COLOR)
     separator1.pack(side="left")
-    minute_spinbox.pack(side="left", padx=5)
-    separator2 = tk.Label(time_frame, text=":", font=title_font, bg=CARD_BG, fg=TEXT_COLOR)
+    minute_spinbox.pack(side="left", padx=8)
+    separator2 = tk.Label(time_frame, text=":", font=('Helvetica', 32, 'bold'), bg=CARD_BG, fg=TEXT_COLOR)
     separator2.pack(side="left")
-    second_spinbox.pack(side="left", padx=5)
+    second_spinbox.pack(side="left", padx=8)
 
-    # Bouton pour ajouter une alarme
+    # Remove the separate control buttons frame and use the spinbox built-in buttons
+    # Make sure the spinbox buttons are visible and large enough
+    for spinbox in [hour_spinbox, minute_spinbox, second_spinbox]:
+        spinbox.config(buttondownrelief=tk.RAISED, buttonuprelief=tk.RAISED)
+        # Make the spinbox buttons more visible by highlighting them
+        spinbox.config(highlightbackground=ACCENT_COLOR, highlightthickness=2)
+
+    # Define increment/decrement functions for keyboard or external button access
+    def increment_spinbox(spinbox):
+        current = int(spinbox.get())
+        max_val = int(spinbox.cget('to'))
+        spinbox.delete(0, 'end')
+        spinbox.insert(0, f"{(current + 1) % (max_val + 1):02d}")
+    
+    def decrement_spinbox(spinbox):
+        current = int(spinbox.get())
+        max_val = int(spinbox.cget('to'))
+        spinbox.delete(0, 'end')
+        spinbox.insert(0, f"{(current - 1) % (max_val + 1):02d}")
+    
+    # Add keyboard bindings for easier control
+    hour_spinbox.bind('<Up>', lambda e: increment_spinbox(hour_spinbox))
+    hour_spinbox.bind('<Down>', lambda e: decrement_spinbox(hour_spinbox))
+    minute_spinbox.bind('<Up>', lambda e: increment_spinbox(minute_spinbox))
+    minute_spinbox.bind('<Down>', lambda e: decrement_spinbox(minute_spinbox))
+    second_spinbox.bind('<Up>', lambda e: increment_spinbox(second_spinbox))
+    second_spinbox.bind('<Down>', lambda e: decrement_spinbox(second_spinbox))
+
+    # Larger "Add Alarm" button for touch screens with reduced padding
     set_alarm_button = tk.Button(
         add_alarm_frame, 
         text="ADD ALARM", 
         command=lambda: set_alarm(None, None, None),
-        font=button_font,
+        font=('Helvetica', 14, 'bold'),
         bg=ACCENT_COLOR,
         fg=TEXT_COLOR,
-        activebackground="#9065CC",  # Darker shade for pressed state
+        activebackground="#9065CC",
         activeforeground=TEXT_COLOR,
-        relief=tk.FLAT,
+        relief=tk.RAISED,
         padx=20,
-        pady=10,
-        borderwidth=0
+        pady=8,
+        borderwidth=3,
+        height=1,
     )
-    set_alarm_button.pack(pady=15)
+    set_alarm_button.pack(pady=10, fill="x")  # Reduced from 15 to 10
 
     # Title for alarm list section
     list_title = tk.Label(right_frame, text="Your Alarms", font=subtitle_font, 
                          fg=ACCENT_COLOR, bg=BG_COLOR)
     list_title.pack(pady=(0, 15), anchor="w")
 
-    # --- ScrollView pour les alarmes ---
-    alarm_container = tk.Frame(right_frame, bg=CARD_BG, padx=10, pady=10)
+    # --- ScrollView pour les alarmes - more compact ---
+    alarm_container = tk.Frame(right_frame, bg=CARD_BG, padx=5, pady=5)  # Reduced padding
     alarm_container.pack(fill="both", expand=True)
 
-    # Création du Canvas pour le scroll
-    alarm_canvas = tk.Canvas(alarm_container, bg=CARD_BG, width=320, height=300, 
+    # Création du Canvas pour le scroll - adjust size for smaller screen
+    alarm_canvas = tk.Canvas(alarm_container, bg=CARD_BG, width=300, height=280, 
                             borderwidth=0, highlightthickness=0)
-    alarm_canvas.pack(side="left", fill="both", expand=True, padx=(0, 10))
+    alarm_canvas.pack(side="left", fill="both", expand=True, padx=(0, 5))  # Reduced padding
 
     # Scrollbar verticale
     scrollbar = tk.Scrollbar(alarm_container, orient="vertical", command=alarm_canvas.yview)
@@ -380,7 +551,7 @@ def run_gui_mode():
     alarm_list_frame = tk.Frame(alarm_canvas, bg=CARD_BG)
     alarm_canvas.create_window((0, 0), window=alarm_list_frame, anchor="nw")
     
-    # Override the update_alarm_list function for better styling
+    # Inside the styled_update_alarm_list function, make cards more compact:
     def styled_update_alarm_list():
         """Met à jour l'affichage des alarmes avec une ScrollView."""
         if WEB_MODE:
@@ -398,9 +569,9 @@ def run_gui_mode():
             return
 
         for i, alarm in enumerate(alarms):
-            # Create a card-like frame for each alarm
-            card = tk.Frame(alarm_list_frame, bg=BG_COLOR, padx=10, pady=10)
-            card.pack(fill="x", pady=5, padx=5)
+            # Create a more compact card-like frame for each alarm
+            card = tk.Frame(alarm_list_frame, bg=BG_COLOR, padx=5, pady=5)  # Reduced padding
+            card.pack(fill="x", pady=3, padx=3)  # Reduced padding
             
             # Top row with time and toggle
             top_row = tk.Frame(card, bg=BG_COLOR)
@@ -467,16 +638,6 @@ def run_gui_mode():
         
         # Ajuste la zone de défilement
         alarm_canvas.update_idletasks()
-        alarm_canvas.config(scrollregion=alarm_canvas.bbox("all"))
-    
-    # Replace the original update_alarm_list
-    global update_alarm_list
-    update_alarm_list = styled_update_alarm_list
-    
-    # Update the alarm list
-    update_alarm_list()
-    
-    # Démarrer la mise à jour de l'horloge
     update_time()
 
     try:

@@ -121,12 +121,38 @@ header { background-color: #333; color: #fff; text-align: center; padding: 1rem;
 }
 
 @keyframes pulse {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.05); }
-    100% { transform: scale(1); }
+    0% { opacity: 1; }
+    50% { opacity: 0.6; }
+    100% { opacity: 1; }
 }
 
 .alarm-notification-overlay h1 {
+    animation: pulse 1s infinite;
+}
+
+.refreshing {
+    animation: pulse 1s infinite;
+}
+
+.alarm-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #eee;
+}
+
+#refreshAlarmsBtn {
+    padding: 5px 10px;
+    background-color: #4CAF50;
+}
+
+#refreshAlarmsBtn:hover {
+    background-color: #45a049;
+}
+
+#refreshAlarmsBtn.refreshing {
     animation: pulse 1s infinite;
 }
 

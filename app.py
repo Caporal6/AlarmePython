@@ -36,7 +36,7 @@ def read_output(process):
             break
 
 def launch_interface_fullscreen():
-    """Launch the Interface 1.py script in a new terminal window full screen on Raspberry Pi"""
+    """Launch the Interface 1.py script in a new process"""
     global interface_process
     
     # Check if a process is already running
@@ -44,32 +44,48 @@ def launch_interface_fullscreen():
         print("Interface is already running")
         return True
     
-    # Check if running on Raspberry Pi
-    if os.path.exists('/usr/bin/lxterminal'):
-        try:
+    try:
+        # First try with direct launch (most reliable)
+        print("Launching interface directly...")
+        interface_process = subprocess.Popen(
+            [sys.executable, 'Interface 1.py'],
+            # Don't redirect output to allow interface to control the console
+            # This prevents blocking issues
+        )
+        
+        # Check if process started successfully
+        if interface_process.poll() is None:
+            print("Interface launched successfully")
+            return True
+        else:
+            print("Failed to launch interface directly")
+    except Exception as e:
+        print(f"Error launching Interface directly: {e}")
+    
+    # Try with terminal as fallback (for Raspberry Pi)
+    try:
+        if os.path.exists('/usr/bin/lxterminal'):
             # Raspberry Pi with LXDE desktop environment
+            print("Trying to launch interface in lxterminal...")
             interface_process = subprocess.Popen([
                 'lxterminal', 
-                '--command=python3 "Interface 1.py"', 
+                '--command', f'python3 "{os.path.join(os.getcwd(), "Interface 1.py")}"', 
                 '--title=Alarm Interface',
                 '--geometry=maximized'
             ])
-            print("Launched Interface in new terminal window")
-            return True
-        except Exception as e:
-            print(f"Error launching Interface: {e}")
-    
-    # Try launching directly without terminal (for development)
-    try:
-        print("Trying to launch interface directly...")
-        interface_process = subprocess.Popen([
-            sys.executable, 'Interface 1.py'
-        ])
-        print("Launched Interface directly")
-        return True
+            
+            # Give it a moment to start
+            time.sleep(1)
+            
+            # Check if process is still running
+            if interface_process.poll() is None:
+                print("Launched Interface in terminal window")
+                return True
     except Exception as e:
-        print(f"Error launching Interface directly: {e}")
-        return False
+        print(f"Error launching Interface in terminal: {e}")
+    
+    print("All methods to launch interface failed")
+    return False
 
 @app.route('/')
 def index():
@@ -158,12 +174,24 @@ def get_output():
 @app.route('/alarms', methods=['GET'])
 def get_alarms():
     try:
+        # Force reading from disk, bypass any OS caching
+        os.sync()
         if os.path.exists(ALARMS_FILE):
+            last_modified = os.path.getmtime(ALARMS_FILE)
             with open(ALARMS_FILE, 'r') as f:
                 alarms = json.load(f)
-                return jsonify({"status": "success", "alarms": alarms})
+                # Read the current file content for hash comparison
+                f.seek(0)
+                content = f.read()
+                content_hash = hash(content)
+                return jsonify({
+                    "status": "success", 
+                    "alarms": alarms,
+                    "timestamp": last_modified,
+                    "content_hash": content_hash
+                })
         else:
-            return jsonify({"status": "success", "alarms": []})
+            return jsonify({"status": "success", "alarms": [], "timestamp": 0, "content_hash": 0})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
@@ -316,12 +344,33 @@ def check_alarms_updated():
     """Check if the alarms file has been modified"""
     try:
         if os.path.exists(ALARMS_FILE):
+            # Get the actual content modification time
             last_modified = os.path.getmtime(ALARMS_FILE)
-            return jsonify({"timestamp": last_modified})
+            # Read the current file content for hash comparison
+            with open(ALARMS_FILE, 'rb') as f:
+                content = f.read()
+                content_hash = hash(content)
+            
+            return jsonify({
+                "timestamp": last_modified,
+                "content_hash": content_hash
+            })
         else:
-            return jsonify({"timestamp": 0})
+            return jsonify({"timestamp": 0, "content_hash": 0})
     except Exception as e:
-        return jsonify({"timestamp": 0, "error": str(e)})
+        return jsonify({"timestamp": 0, "content_hash": 0, "error": str(e)})
+
+@app.route('/status')
+def get_status():
+    """Return the status of the local application"""
+    global script_process, interface_process
+    
+    return jsonify({
+        "script_running": script_process is not None and script_process.poll() is None,
+        "interface_running": interface_process is not None and interface_process.poll() is None,
+        "web_mode": True,
+        "server_time": time.strftime('%H:%M:%S')
+    })
 
 def cleanup():
     global script_process, interface_process

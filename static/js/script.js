@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let outputPollInterval = null;
     let alarmPollInterval = null;
     let alarmStateInterval = null;
+    let statusPollInterval = null;
     
     // Initialize time selectors
     initTimeSelectors();
@@ -208,8 +209,15 @@ document.addEventListener('DOMContentLoaded', function() {
                         alarmList.appendChild(row);
                     });
                     
-                    // Update last check timestamp
-                    lastAlarmTimestamp = Date.now() / 1000;
+                    // Update timestamps and hashes
+                    if (data.timestamp) {
+                        lastAlarmTimestamp = data.timestamp;
+                    }
+                    if (data.content_hash) {
+                        lastAlarmContentHash = data.content_hash;
+                    }
+                    
+                    console.log(`Updated alarm list: ${data.alarms.length} alarms found`);
                 } else {
                     console.error('Error loading alarms:', data.message);
                 }
@@ -255,28 +263,32 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
     
-    function appendOutput(text) {
-        outputElement.textContent += text + '\n';
-        
-        // Auto-scroll to bottom
-        const outputContainer = outputElement.parentElement;
-        outputContainer.scrollTop = outputContainer.scrollHeight;
-    }
-
-    // Start polling for alarm state
+    // Start all polling functions
+    startStatusPolling();
+    startAlarmFileWatcher();
     startAlarmStatePolling();
 
-    // Start watching for alarm file changes
-    startAlarmFileWatcher();
+    // Add refresh button functionality
+    const refreshAlarmsBtn = document.getElementById('refreshAlarmsBtn');
+    if (refreshAlarmsBtn) {
+        refreshAlarmsBtn.addEventListener('click', function() {
+            refreshAlarmsBtn.classList.add('refreshing');
+            loadAlarms();
+            setTimeout(() => {
+                refreshAlarmsBtn.classList.remove('refreshing');
+            }, 1000);
+        });
+    }
 });
 
 // Add these variables at the top of the file (outside any functions)
 let lastAlarmTimestamp = 0;
+let lastAlarmContentHash = 0;
 let alarmWatcherInterval = null;
 
 function startAlarmFileWatcher() {
-    // Check every 2 seconds if the alarms file has changed
-    alarmWatcherInterval = setInterval(checkAlarmsUpdated, 2000);
+    // Check more frequently - every 1 second
+    alarmWatcherInterval = setInterval(checkAlarmsUpdated, 1000);
     // Initial check to get the current timestamp
     checkAlarmsUpdated();
 }
@@ -285,12 +297,22 @@ function checkAlarmsUpdated() {
     fetch('/check_alarms_updated')
         .then(response => response.json())
         .then(data => {
-            // If the timestamp is different and not the first time we check
-            if (lastAlarmTimestamp > 0 && data.timestamp > lastAlarmTimestamp) {
+            // Debug logging
+            console.log(`Checking alarms: last timestamp=${lastAlarmTimestamp}, current=${data.timestamp}`);
+            console.log(`Last content hash=${lastAlarmContentHash}, current=${data.content_hash}`);
+            
+            // Check if either the timestamp or content hash has changed
+            if (
+                (data.timestamp > 0 && data.timestamp != lastAlarmTimestamp) || 
+                (data.content_hash > 0 && data.content_hash != lastAlarmContentHash)
+            ) {
                 console.log('Alarms file has been modified, refreshing');
                 loadAlarms(); // Refresh the alarm list
             }
+            
+            // Always update both values
             lastAlarmTimestamp = data.timestamp;
+            lastAlarmContentHash = data.content_hash;
         })
         .catch(error => {
             console.error('Error checking alarms file:', error);
@@ -402,4 +424,61 @@ function showAlarmNotification(message) {
     overlay.appendChild(snoozeBtn);
     
     document.body.appendChild(overlay);
+}
+
+function startStatusPolling() {
+    // Check every 5 seconds
+    statusPollInterval = setInterval(checkApplicationStatus, 5000);
+    // Initial check
+    checkApplicationStatus();
+}
+
+function checkApplicationStatus() {
+    fetch('/status')
+        .then(response => response.json())
+        .then(data => {
+            // Update UI based on status
+            updateUIFromStatus(data);
+        })
+        .catch(error => {
+            console.error('Error checking application status:', error);
+        });
+}
+
+function updateUIFromStatus(data) {
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusSpan = document.getElementById('status');
+    
+    if (data.script_running) {
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        statusSpan.textContent = 'En cours d\'exécution';
+        statusSpan.className = 'running';
+        
+        // Start polling if not already
+        if (!outputPollInterval) {
+            outputPollInterval = setInterval(pollOutput, 500);
+        }
+        
+        // Start polling for alarms
+        if (!alarmPollInterval) {
+            alarmPollInterval = setInterval(loadAlarms, 5000);
+        }
+    } else {
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        statusSpan.textContent = 'Arrêté';
+        statusSpan.className = '';
+    }
+}
+
+// Move this to global scope or handle correctly in the code
+function appendOutput(text) {
+    const outputElement = document.getElementById('output');
+    outputElement.textContent += text + '\n';
+    
+    // Auto-scroll to bottom
+    const outputContainer = outputElement.parentElement;
+    outputContainer.scrollTop = outputContainer.scrollHeight;
 }
