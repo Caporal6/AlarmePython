@@ -174,7 +174,7 @@ def update_weather():
 
 # Création de la fenêtre principale
 root = tk.Tk()
-root.title("Horloge et Alarme")
+root.title("SmartAlarm")
 root.geometry("1000x800")
 root.configure(bg='black')
 
