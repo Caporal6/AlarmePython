@@ -329,6 +329,9 @@ function toggleAlarm(index) {
         if (data.status === 'success') {
             loadAlarms(); // Refresh alarm list
             appendOutput(data.message);
+            
+            // Also check the alarm state after toggling
+            checkAlarmState();
         } else {
             alert('Error: ' + data.message);
         }
@@ -338,7 +341,6 @@ function toggleAlarm(index) {
         alert('An error occurred while toggling the alarm');
     });
 }
-
 function startAlarmStatePolling() {
     // Poll every second to check if an alarm is active
     alarmStateInterval = setInterval(checkAlarmState, 1000);
@@ -356,12 +358,27 @@ function checkAlarmState() {
         .then(response => response.json())
         .then(data => {
             if (data.alarm_active) {
-                showAlarmNotification(data.message);
+                if (!alarmNotificationShown) {
+                    showAlarmNotification(data.message);
+                }
+            } else {
+                // If the alarm is not active but notification is shown, hide it
+                if (alarmNotificationShown) {
+                    hideAlarmNotification();
+                }
             }
         })
         .catch(error => {
             console.error('Error checking alarm state:', error);
         });
+}
+
+function hideAlarmNotification() {
+    const overlay = document.querySelector('.alarm-notification-overlay');
+    if (overlay) {
+        document.body.removeChild(overlay);
+    }
+    alarmNotificationShown = false;
 }
 
 let alarmNotificationShown = false;
@@ -416,6 +433,9 @@ function showAlarmNotification(message) {
                 // Remove the overlay
                 document.body.removeChild(overlay);
                 alarmNotificationShown = false;
+                
+                // Also refresh alarm list to ensure UI is in sync
+                loadAlarms();
             })
             .catch(error => {
                 console.error('Error snoozing alarm:', error);
@@ -442,6 +462,21 @@ function checkApplicationStatus() {
         })
         .catch(error => {
             console.error('Error checking application status:', error);
+        });
+}
+
+function snoozeAlarm() {
+    fetch('/snooze', { method: 'POST' })
+        .then(response => response.json())
+        .then(() => {
+            // Remove the overlay
+            hideAlarmNotification();
+            
+            // Also refresh alarm list to ensure UI is in sync
+            loadAlarms();
+        })
+        .catch(error => {
+            console.error('Error snoozing alarm:', error);
         });
 }
 

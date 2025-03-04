@@ -47,18 +47,44 @@ def launch_interface_fullscreen():
     try:
         # First try with direct launch (most reliable)
         print("Launching interface directly...")
+        
+        # Set environment variables to help with troubleshooting
+        env = os.environ.copy()
+        env['PYTHONUNBUFFERED'] = '1'  # Disable output buffering
+        env['ALARM_DEBUG'] = '1'  # Add debug flag for our code
+        
+        # Launch with stderr and stdout redirected to see any errors
         interface_process = subprocess.Popen(
             [sys.executable, 'Interface 1.py'],
-            # Don't redirect output to allow interface to control the console
-            # This prevents blocking issues
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            env=env
         )
+        
+        # Start a thread to read error output
+        def read_stderr(proc):
+            for line in proc.stderr:
+                print(f"Interface Error: {line.strip()}")
+        
+        stderr_thread = threading.Thread(target=read_stderr, args=(interface_process,))
+        stderr_thread.daemon = True
+        stderr_thread.start()
+        
+        # Give it a moment to start and check for immediate errors
+        time.sleep(1)
         
         # Check if process started successfully
         if interface_process.poll() is None:
             print("Interface launched successfully")
             return True
         else:
-            print("Failed to launch interface directly")
+            print("Failed to launch interface directly. Exit code:", interface_process.poll())
+            # Try to read any error output
+            stderr_output = interface_process.stderr.read()
+            if stderr_output:
+                print(f"Error output: {stderr_output}")
+            return False
     except Exception as e:
         print(f"Error launching Interface directly: {e}")
     
@@ -86,6 +112,7 @@ def launch_interface_fullscreen():
     
     print("All methods to launch interface failed")
     return False
+
 
 @app.route('/')
 def index():
@@ -284,6 +311,7 @@ def toggle_alarm(index):
         result = subprocess.run(
             [sys.executable, '-c', f'''
 import json, os
+from alarm_state import clear_state, set_state, get_state
 alarms_file = "{ALARMS_FILE}"
 index = {index}
 alarms = []
@@ -293,9 +321,17 @@ if os.path.exists(alarms_file):
         alarms = json.load(f)
 
 if 0 <= index < len(alarms):
+    # Toggle the alarm
     alarms[index]["active"] = not alarms[index]["active"]
     status = "activated" if alarms[index]["active"] else "deactivated"
     message = f"Alarm at {{alarms[index]['time']}} {{status}}"
+    
+    # If deactivating and this alarm was active, clear alarm state
+    current_state = get_state()
+    if current_state["alarm_active"] and not alarms[index]["active"]:
+        clear_state()
+    
+    # Save changes
     with open(alarms_file, 'w') as f:
         json.dump(alarms, f)
     print(message)

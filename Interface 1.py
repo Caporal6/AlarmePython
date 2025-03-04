@@ -8,6 +8,15 @@ from pathlib import Path
 
 print("Interface 1.py starting...")
 
+# Flag to check if we're running in debug mode
+DEBUG_MODE = os.environ.get('ALARM_DEBUG', '0') == '1'
+
+# Flag to check if we're running in web mode
+WEB_MODE = os.environ.get('WEB_MODE', '0') == '1'
+
+if DEBUG_MODE:
+    print("Debug mode enabled")
+
 try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
@@ -21,15 +30,48 @@ except ImportError as e:
 
 # Import the alarm state module
 try:
-    from alarm_state import set_state, clear_state
-except ImportError:
-    # Fallback implementation if the module isn't available
+    # First import the module itself without functions
+    import alarm_state
+    print("Alarm state module imported successfully")
+    
+    # We'll access functions through the module to avoid circular imports
+    def get_state():
+        try:
+            return alarm_state.get_state()
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"Error getting alarm state: {e}")
+            return {"alarm_active": False, "timestamp": 0, "message": ""}
+    
     def set_state(alarm_active, message=""):
-        print(f"Setting alarm state: {alarm_active}, {message}")
+        try:
+            return alarm_state.set_state(alarm_active, message)
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"Error setting alarm state: {e}")
+            return False
+    
+    def clear_state():
+        try:
+            return alarm_state.clear_state()
+        except Exception as e:
+            if DEBUG_MODE:
+                print(f"Error clearing alarm state: {e}")
+            return False
+            
+except ImportError as e:
+    print(f"Error importing alarm_state module: {e}")
+    # Fallback implementation if the module isn't available
+    def get_state():
+        print("Using fallback get_state implementation")
+        return {"alarm_active": False, "timestamp": 0, "message": ""}
+    
+    def set_state(alarm_active, message=""):
+        print(f"Setting alarm state (fallback): {alarm_active}, {message}")
         return True
     
     def clear_state():
-        print("Clearing alarm state")
+        print("Clearing alarm state (fallback)")
         return True
 
 # File to store alarms data
@@ -38,31 +80,126 @@ ALARMS_FILE = "alarms.json"
 # Liste pour stocker les alarmes
 alarms = []
 
-# Flag to check if we're running in web mode
-WEB_MODE = os.environ.get('WEB_MODE', '0') == '1'
-
 # Load alarms from file
 def load_alarms():
     global alarms
     try:
         if os.path.exists(ALARMS_FILE):
             # Force sync to ensure we're reading the latest version
-            os.sync()
+            if hasattr(os, 'sync'):
+                os.sync()
+                
+            # Get file stats before reading
+            file_size = os.path.getsize(ALARMS_FILE)
+            if file_size == 0:
+                print("Warning: Alarms file is empty (zero bytes)")
+                alarms = []
+                return False
+                
             with open(ALARMS_FILE, 'r') as f:
-                loaded_alarms = json.load(f)
+                file_content = f.read()
+                if not file_content.strip():
+                    print("Warning: Alarms file is empty (no content)")
+                    alarms = []
+                    return False
+                    
+                loaded_alarms = json.loads(file_content)
+                print(f"Loaded raw alarms from file: {loaded_alarms}")
+                
                 # Validate the structure before replacing
+                valid_alarms = []
                 for alarm in loaded_alarms:
                     if "time" not in alarm or "active" not in alarm:
                         print(f"Warning: Invalid alarm format: {alarm}")
                         continue
+                    valid_alarms.append(alarm)
                 
-                # Update the global alarms list
-                alarms = loaded_alarms
-                print(f"Loaded {len(alarms)} alarms from file")
-                return True
+                # Only update if we found any valid alarms
+                if valid_alarms:
+                    # Update the global alarms list
+                    alarms = valid_alarms
+                    print(f"Loaded {len(alarms)} alarms from file")
+                    return True
+                else:
+                    print("No valid alarms found in file")
+                    return False
+        else:
+            print(f"Alarms file {ALARMS_FILE} does not exist")
+            return False
+    except json.JSONDecodeError as e:
+        print(f"JSON parsing error in alarms file: {e}")
+        print(f"File content: {open(ALARMS_FILE, 'r').read() if os.path.exists(ALARMS_FILE) else 'File does not exist'}")
+        return False
     except Exception as e:
         print(f"Error loading alarms: {e}")
         return False
+
+
+def force_refresh_alarms():
+    """Force reload alarms from file and update the display"""
+    global alarms
+    print("Forcing refresh of alarms from file...")
+    
+    # Clear current alarms
+    alarms = []
+    
+    # Force file sync to ensure we're reading latest version
+    if hasattr(os, 'sync'):
+        os.sync()
+    
+    # Check if the file exists
+    if not os.path.exists(ALARMS_FILE):
+        print(f"Warning: Alarms file {ALARMS_FILE} does not exist")
+        return False
+    
+    # Try reading the file directly first to check content
+    try:
+        with open(ALARMS_FILE, 'r') as f:
+            file_content = f.read()
+            print(f"Alarm file raw content: {file_content}")
+    except Exception as e:
+        print(f"Error reading alarm file directly: {e}")
+    
+    # Now properly load alarms
+    try:
+        if os.path.exists(ALARMS_FILE):
+            with open(ALARMS_FILE, 'r') as f:
+                loaded_alarms = json.load(f)
+                print(f"Loaded alarms content: {loaded_alarms}")
+                
+                # Validate the structure before replacing
+                valid_alarms = []
+                for alarm in loaded_alarms:
+                    if "time" not in alarm or "active" not in alarm:
+                        print(f"Warning: Invalid alarm format: {alarm}")
+                        continue
+                    valid_alarms.append(alarm)
+                
+                # Update the global alarms list
+                alarms = valid_alarms
+                print(f"Successfully loaded {len(alarms)} alarms from file")
+                
+                # Update the display if in GUI mode
+                if not WEB_MODE and 'styled_update_alarm_list' in globals():
+                    styled_update_alarm_list()
+                    
+                return True
+        else:
+            print(f"Alarms file {ALARMS_FILE} does not exist")
+    except json.JSONDecodeError as e:
+        print(f"JSON parsing error in alarms file: {e}")
+        # Try to fix the file with a default empty list
+        try:
+            with open(ALARMS_FILE, 'w') as f:
+                json.dump([], f)
+            print("Reset alarms file to empty list due to JSON error")
+        except Exception as write_err:
+            print(f"Error fixing alarms file: {write_err}")
+    except Exception as e:
+        print(f"Error loading alarms: {e}")
+    
+    return False
+
 
 # Save alarms to file
 def save_alarms():
@@ -87,8 +224,12 @@ def save_alarms():
     except Exception as e:
         print(f"Error saving alarms: {e}")
 
-# Load alarms at startup
-load_alarms()
+# Immediate load attempt with retry
+for _ in range(3):  # Try up to 3 times
+    if load_alarms():
+        break
+    print("Retry loading alarms...")
+    time.sleep(0.5)
 
 alarm_active = False
 
@@ -112,6 +253,29 @@ def check_alarm(current_time):
     # Check if we're running in GUI mode and if snooze_button exists
     has_snooze_button = 'snooze_button' in globals() if not WEB_MODE else False
     
+    # First check the global alarm state from file (if toggled from web)
+    state = get_state()
+    
+    # If alarm is active in the shared state but not locally, sync the local state
+    if state["alarm_active"] and not alarm_active:
+        alarm_active = True
+        if not WEB_MODE:
+            alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
+            if has_snooze_button:
+                snooze_button.pack(pady=10)  # Affiche le bouton Snooze
+        else:
+            print(f"🔔 ALARM TRIGGERED from web: {state['message']}")
+        return
+    
+    # If alarm was snoozed from web but still active locally, sync the local state
+    if not state["alarm_active"] and alarm_active:
+        alarm_active = False
+        if not WEB_MODE:
+            alarm_message.config(text="")
+            if has_snooze_button:
+                snooze_button.pack_forget()
+    
+    # Regular alarm checking logic
     for alarm in alarms:
         if alarm["active"] and alarm["time"] == current_time and not alarm_active:
             if not WEB_MODE:
@@ -258,7 +422,8 @@ class AlarmFileHandler(FileSystemEventHandler):
             print(f"Detected changes to {ALARMS_FILE}")
             # Use a slight delay to ensure the file is completely written
             time.sleep(0.1)
-            force_refresh()
+            # Use the more robust force_refresh_alarms function
+            force_refresh_alarms()
 
 def styled_update_alarm_list():
     """Met à jour l'affichage des alarmes avec une ScrollView."""
@@ -347,11 +512,19 @@ def styled_update_alarm_list():
     # Ajuste la zone de défilement
     alarm_canvas.update_idletasks()
 
+# Move styled_update_alarm_list to global scope for use by other functions
+globals()['styled_update_alarm_list'] = styled_update_alarm_list
+
+# Initial setup of alarms - ensure we're starting with the latest data
+force_refresh_alarms()
+styled_update_alarm_list()
+
 def force_refresh():
     """Force refresh alarms from file and update UI"""
-    success = load_alarms()
-    if success and not WEB_MODE:
-        styled_update_alarm_list()
+    print("Forcing refresh of alarms...")
+    # Use force_refresh_alarms which has more robust error handling
+    success = force_refresh_alarms()
+    print(f"Refresh {'successful' if success else 'failed'}")
     return success
 
 def run_gui_mode():
@@ -638,7 +811,34 @@ def run_gui_mode():
         
         # Ajuste la zone de défilement
         alarm_canvas.update_idletasks()
+    
+    # Initial setup of alarms
+    styled_update_alarm_list()
+    
+    # Initialize GUI with periodic checks
+    initialize_gui()
+    
+    try:
+        # Lancer l'application
+        root.mainloop()
+    finally:
+        observer.stop()
+        observer.join()
+
+def initialize_gui():
+    """Additional initialization for GUI mode"""
+    # Force refresh of alarms when starting up
+    force_refresh_alarms()
+    
+    # Schedule regular checks for changes in alarms file
+    def periodic_alarm_check():
+        force_refresh_alarms()
+        root.after(5000, periodic_alarm_check)  # Check every 5 seconds
+    
+    # Start the periodic check
+    root.after(5000, periodic_alarm_check)
     update_time()
+    monitor_file_changes()
 
     try:
         # Lancer l'application
@@ -646,6 +846,20 @@ def run_gui_mode():
     finally:
         observer.stop()
         observer.join()
+
+def monitor_file_changes():
+    """Monitor file changes to help with debugging"""
+    if not os.path.exists(ALARMS_FILE):
+        print("File does not exist yet")
+        return
+        
+    last_modified = os.path.getmtime(ALARMS_FILE)
+    file_size = os.path.getsize(ALARMS_FILE)
+    print(f"File monitor: size={file_size}, last_modified={last_modified}")
+    
+    # Schedule next check
+    if not WEB_MODE:
+        root.after(5000, monitor_file_changes)
 
 def run_web_mode():
     print("Starting alarm system in web mode")
