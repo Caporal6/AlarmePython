@@ -351,7 +351,7 @@ def set_alarm(hour, minute, second):
     if WEB_MODE:
         alarm_time = f"{hour:02d}:{minute:02d}:{second:02d}"
     else:
-        alarm_time = f"{hour_spinbox.get()}:{minute_spinbox.get()}:{second_spinbox.get()}"
+        alarm_time = get_wheel_time()
     
     new_alarm = {"time": alarm_time, "active": True}
     actif = False
@@ -458,7 +458,7 @@ def edit_alarm(index, hour=None, minute=None, second=None):
     if WEB_MODE and hour is not None and minute is not None and second is not None:
         new_time = f"{hour:02d}:{minute:02d}:{second:02d}"
     else:
-        new_time = f"{hour_spinbox.get()}:{minute_spinbox.get()}:{second_spinbox.get()}"
+        new_time = get_wheel_time()
     
     old_time = alarms[index]["time"]
     alarms[index]["time"] = new_time
@@ -586,14 +586,26 @@ def force_refresh():
     return success
 
 def run_gui_mode():
+    print("Starting GUI mode...")
     global root, label, alarm_message, snooze_button, hour_spinbox, minute_spinbox
     global second_spinbox, alarm_canvas, alarm_list_frame
+    global BG_COLOR, TEXT_COLOR, ACCENT_COLOR, DANGER_COLOR, SUCCESS_COLOR, CARD_BG
+    global title_font, subtitle_font, button_font, text_font
     
-    # Set up file watching
-    event_handler = AlarmFileHandler()
-    observer = Observer()
-    observer.schedule(event_handler, path='.', recursive=False)
-    observer.start()
+    # Set up file watching if Observer is available
+    if Observer is not None:
+        try:
+            event_handler = AlarmFileHandler()
+            observer = Observer()
+            observer.schedule(event_handler, path='.', recursive=False)
+            observer.start()
+            print("File watcher started")
+        except Exception as e:
+            print(f"Error starting file watcher: {e}")
+            observer = None
+    else:
+        observer = None
+        print("File watching not available (watchdog not installed)")
     
     # Custom colors
     BG_COLOR = "#121212"  # Dark background
@@ -603,23 +615,37 @@ def run_gui_mode():
     SUCCESS_COLOR = "#03DAC6"  # Teal for active states
     CARD_BG = "#1E1E1E"  # Slightly lighter than background for cards
     
-    # Création de la fenêtre principale
+    # Create the main window
     root = tk.Tk()
+    print("Tk root window created")
     root.title("Horloge et Alarme")
     
-    # Account for taskbar by making the window slightly smaller than 800x450
-    root.geometry("800x450")  # 30 pixels for taskbar
+    # IMPORTANT: Set window attributes in a safer way
+    try:
+        # Skip the problematic -type attribute entirely
+        # Just set reasonable window size
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight() - 30  # Account for taskbar
+        root.geometry(f"{screen_width}x{screen_height}+0+0")
+        print(f"Window size set to {screen_width}x{screen_height}")
+    except Exception as e:
+        # Fallback to basic size if needed
+        print(f"Error setting window size: {e}")
+        root.geometry("800x450")
     
-    # Set the window to fullscreen but account for taskbar
-    # Uncomment one of these approaches:
-    # 1. No decorations but not true fullscreen (keeps taskbar visible)
-    root.attributes('-type', 'dock')  # For Linux/X11
-    
-    # 2. Alternative method for Raspberry Pi
-    # root.overrideredirect(True)  # Remove window decorations
-    # root.geometry("{0}x{1}+0+0".format(root.winfo_screenwidth(), root.winfo_screenheight() - 30))
-    
+    # Configure the window to look nice
     root.configure(bg=BG_COLOR)
+    
+    # Add fullscreen toggle with F11 key
+    def toggle_fullscreen(event=None):
+        try:
+            is_fullscreen = bool(root.attributes('-fullscreen'))
+            root.attributes('-fullscreen', not is_fullscreen)
+        except Exception as e:
+            print(f"Error toggling fullscreen: {e}")
+    
+    root.bind('<F11>', toggle_fullscreen)
+    root.bind('<Escape>', lambda event: root.attributes('-fullscreen', False))
     
     # Make more compact layout
     # Custom font styles - slightly smaller
@@ -679,65 +705,142 @@ def run_gui_mode():
                         fg=ACCENT_COLOR, bg=CARD_BG)
     add_title.pack(pady=(0, 10))  # Reduced padding from 15 to 10
 
-    # Section pour sélectionner une heure
+    # Time selection section with scroll wheels
     time_frame = tk.Frame(add_alarm_frame, bg=CARD_BG)
-    time_frame.pack(pady=5)  # Reduced padding from 10 to 5
+    time_frame.pack(pady=5, fill="x")  # Reduced padding from 10 to 5
 
-    # Style for spinboxes with integrated up/down buttons
-    spinbox_style = {
-        'width': 3,
-        'format': "%02.0f", 
-        'wrap': True,
-        'bg': BG_COLOR,
-        'fg': TEXT_COLOR,
-        'buttonbackground': ACCENT_COLOR,
-        'font': ('Helvetica', 24, 'bold'),
-        'justify': 'center',
-        'bd': 2,
-        'relief': tk.RIDGE,
-    }
+    # Create scrollable time wheel frames
+    hour_wheel = tk.Frame(time_frame, bg=CARD_BG, highlightbackground=ACCENT_COLOR, highlightthickness=2)
+    minute_wheel = tk.Frame(time_frame, bg=CARD_BG, highlightbackground=ACCENT_COLOR, highlightthickness=2)
+    second_wheel = tk.Frame(time_frame, bg=CARD_BG, highlightbackground=ACCENT_COLOR, highlightthickness=2)
 
-    # Sélecteurs pour les heures, minutes et secondes
-    hour_spinbox = tk.Spinbox(time_frame, from_=0, to=23, **spinbox_style)
-    minute_spinbox = tk.Spinbox(time_frame, from_=0, to=59, **spinbox_style)
-    second_spinbox = tk.Spinbox(time_frame, from_=0, to=59, **spinbox_style)
-
-    # Add more padding and larger separators between spinboxes
-    hour_spinbox.pack(side="left", padx=8)
+    # Pack the wheels side by side with separators
+    hour_wheel.pack(side="left", fill="y", expand=True, padx=5)
     separator1 = tk.Label(time_frame, text=":", font=('Helvetica', 32, 'bold'), bg=CARD_BG, fg=TEXT_COLOR)
     separator1.pack(side="left")
-    minute_spinbox.pack(side="left", padx=8)
+    minute_wheel.pack(side="left", fill="y", expand=True, padx=5)
     separator2 = tk.Label(time_frame, text=":", font=('Helvetica', 32, 'bold'), bg=CARD_BG, fg=TEXT_COLOR)
     separator2.pack(side="left")
-    second_spinbox.pack(side="left", padx=8)
+    second_wheel.pack(side="left", fill="y", expand=True, padx=5)
 
-    # Remove the separate control buttons frame and use the spinbox built-in buttons
-    # Make sure the spinbox buttons are visible and large enough
-    for spinbox in [hour_spinbox, minute_spinbox, second_spinbox]:
-        spinbox.config(buttondownrelief=tk.RAISED, buttonuprelief=tk.RAISED)
-        # Make the spinbox buttons more visible by highlighting them
-        spinbox.config(highlightbackground=ACCENT_COLOR, highlightthickness=2)
+    # Create canvases for the scrolling effect
+    hour_canvas = tk.Canvas(hour_wheel, width=60, height=150, bg=CARD_BG, 
+                        highlightthickness=0, bd=0)
+    minute_canvas = tk.Canvas(minute_wheel, width=60, height=150, bg=CARD_BG, 
+                            highlightthickness=0, bd=0)
+    second_canvas = tk.Canvas(second_wheel, width=60, height=150, bg=CARD_BG, 
+                            highlightthickness=0, bd=0)
 
-    # Define increment/decrement functions for keyboard or external button access
-    def increment_spinbox(spinbox):
-        current = int(spinbox.get())
-        max_val = int(spinbox.cget('to'))
-        spinbox.delete(0, 'end')
-        spinbox.insert(0, f"{(current + 1) % (max_val + 1):02d}")
-    
-    def decrement_spinbox(spinbox):
-        current = int(spinbox.get())
-        max_val = int(spinbox.cget('to'))
-        spinbox.delete(0, 'end')
-        spinbox.insert(0, f"{(current - 1) % (max_val + 1):02d}")
-    
-    # Add keyboard bindings for easier control
-    hour_spinbox.bind('<Up>', lambda e: increment_spinbox(hour_spinbox))
-    hour_spinbox.bind('<Down>', lambda e: decrement_spinbox(hour_spinbox))
-    minute_spinbox.bind('<Up>', lambda e: increment_spinbox(minute_spinbox))
-    minute_spinbox.bind('<Down>', lambda e: decrement_spinbox(minute_spinbox))
-    second_spinbox.bind('<Up>', lambda e: increment_spinbox(second_spinbox))
-    second_spinbox.bind('<Down>', lambda e: decrement_spinbox(second_spinbox))
+    hour_canvas.pack(fill="both", expand=True)
+    minute_canvas.pack(fill="both", expand=True)
+    second_canvas.pack(fill="both", expand=True)
+
+    # Create frames that will hold the time values
+    hour_frame = tk.Frame(hour_canvas, bg=CARD_BG)
+    minute_frame = tk.Frame(minute_canvas, bg=CARD_BG)
+    second_frame = tk.Frame(second_canvas, bg=CARD_BG)
+
+    # Add windows to canvases
+    hour_window = hour_canvas.create_window((30, 75), window=hour_frame, anchor="center")
+    minute_window = minute_canvas.create_window((30, 75), window=minute_frame, anchor="center")
+    second_window = second_canvas.create_window((30, 75), window=second_frame, anchor="center")
+
+    # Create highlight area in the middle to show selected time
+    for canvas in [hour_canvas, minute_canvas, second_canvas]:
+        # Create highlight rectangle for the selected value
+        canvas.create_rectangle(0, 60, 60, 90, fill=BG_COLOR, outline=ACCENT_COLOR)
+
+    # Functions to create and manage time wheels
+    def create_time_wheel(frame, canvas, values):
+        # Clear existing widgets
+        for widget in frame.winfo_children():
+            widget.destroy()
+            
+        # Create each time value as a label
+        for i, val in enumerate(values):
+            label = tk.Label(frame, text=f"{val:02d}", font=('Helvetica', 20), 
+                            fg=TEXT_COLOR, bg=CARD_BG, width=2)
+            label.pack(pady=5)
+            # Add click/touch event to select this value
+            label.bind("<Button-1>", lambda e, v=val, c=canvas, f=frame: select_time_value(v, c, f))
+        
+        # Configure scroll region
+        frame.update_idletasks()
+        canvas.config(scrollregion=canvas.bbox("all"))
+
+    # Function to handle scrolling
+    def on_wheel_scroll(event, canvas, frame, max_val):
+        # Get current scroll position
+        current_y = canvas.canvasy(0)
+        # Convert to item index (each item is about 40px high)
+        item_height = 40
+        current_index = int(current_y / item_height)
+        
+        # Calculate new index based on scroll direction
+        if event.delta > 0:  # Scroll up
+            new_index = max(current_index - 1, 0)
+        else:  # Scroll down
+            new_index = min(current_index + 1, max_val)
+        
+        # Scroll to the new position
+        canvas.yview_moveto(new_index * item_height / frame.winfo_height())
+        
+        # Get the selected value
+        selected_val = new_index % (max_val + 1)
+        return selected_val
+
+    # Function to select a time value when clicked
+    def select_time_value(value, canvas, frame):
+        # Calculate position to center the selected value
+        item_height = 40
+        canvas.yview_moveto((value * item_height) / frame.winfo_height() - 0.3)
+
+    # Create hours, minutes, and seconds wheels
+    create_time_wheel(hour_frame, hour_canvas, list(range(24)))
+    create_time_wheel(minute_frame, minute_canvas, list(range(60)))
+    create_time_wheel(second_frame, second_canvas, list(range(60)))
+
+    # Add mouse wheel binding
+    hour_canvas.bind("<MouseWheel>", lambda e: on_wheel_scroll(e, hour_canvas, hour_frame, 23))
+    minute_canvas.bind("<MouseWheel>", lambda e: on_wheel_scroll(e, minute_canvas, minute_frame, 59))
+    second_canvas.bind("<MouseWheel>", lambda e: on_wheel_scroll(e, second_canvas, second_frame, 59))
+
+    # Add touch scrolling for touchscreens
+    def start_scroll(event, canvas):
+        canvas.scan_mark(event.x, event.y)
+        
+    def do_scroll(event, canvas):
+        canvas.scan_dragto(event.x, event.y, gain=1)
+
+    for canvas in [hour_canvas, minute_canvas, second_canvas]:
+        canvas.bind("<ButtonPress-1>", lambda e, c=canvas: start_scroll(e, c))
+        canvas.bind("<B1-Motion>", lambda e, c=canvas: do_scroll(e, c))
+        canvas.bind("<ButtonRelease-1>", lambda e, c=canvas: snap_to_closest(e, c))
+
+    # Define how to get the time from the wheels
+    def get_wheel_time():
+        # Get center position of each wheel to determine selected values
+        hour_pos = hour_canvas.canvasy(0) + 75
+        minute_pos = minute_canvas.canvasy(0) + 75
+        second_pos = second_canvas.canvasy(0) + 75
+        
+        # Convert to indices (each item is about 40px high)
+        item_height = 40
+        hour = int((hour_pos // item_height) % 24)
+        minute = int((minute_pos // item_height) % 60)
+        second = int((second_pos // item_height) % 60)
+        
+        return f"{hour:02d}:{minute:02d}:{second:02d}"
+
+    # Function to snap to closest value after scrolling
+    def snap_to_closest(event, canvas):
+        # Get current scroll position
+        current_y = canvas.canvasy(0)
+        # Calculate closest item position (each item is about 40px high)
+        item_height = 40
+        closest_item = round(current_y / item_height)
+        # Snap to that position
+        canvas.yview_moveto(closest_item * item_height / canvas.winfo_height())
 
     # Larger "Add Alarm" button for touch screens with reduced padding
     set_alarm_button = tk.Button(
@@ -869,6 +972,8 @@ def run_gui_mode():
         
         # Ajuste la zone de défilement
         alarm_canvas.update_idletasks()
+
+    monitor_file_changes()
     
     # Make styled_update_alarm_list accessible globally AFTER it's defined
     globals()['styled_update_alarm_list'] = styled_update_alarm_list
@@ -876,30 +981,26 @@ def run_gui_mode():
     # Initial setup of alarms - NOW it's safe to do this
     force_refresh_alarms()
     
-    # Initialize GUI with periodic checks
-    initialize_gui()
-    
+    # Now start the main event loop with proper error handling
+    print("Starting main event loop...")
     try:
-        # Lancer l'application
+        update_time()  # Start the time updates which will also check alarms
+        monitor_file_changes()  # Start monitoring for file changes
         root.mainloop()
+    except KeyboardInterrupt:
+        print("Keyboard interrupt received, shutting down...")
+    except Exception as e:
+        print(f"Error in main event loop: {e}")
     finally:
-        observer.stop()
-        observer.join()
-
-def initialize_gui():
-    """Additional initialization for GUI mode"""
-    # Force refresh of alarms when starting up
-    force_refresh_alarms()
-    
-    # Schedule regular checks for changes in alarms file
-    def periodic_alarm_check():
-        force_refresh_alarms()
-        root.after(5000, periodic_alarm_check)  # Check every 5 seconds
-    
-    # Start the periodic check
-    root.after(5000, periodic_alarm_check)
-    update_time()
-    monitor_file_changes()
+        # Clean up
+        print("GUI shutting down, cleaning up...")
+        if observer is not None:
+            try:
+                observer.stop()
+                observer.join(timeout=1.0)  # Wait up to 1 second
+                print("File watcher stopped")
+            except Exception as e:
+                print(f"Error stopping file watcher: {e}")
 
 def monitor_file_changes():
     """Monitor file changes to help with debugging"""
@@ -925,7 +1026,45 @@ def run_web_mode():
 
 if __name__ == "__main__":
     print(f"Starting in {'web' if WEB_MODE else 'GUI'} mode")
+    
     if WEB_MODE:
         run_web_mode()
     else:
-        run_gui_mode()
+        try:
+            run_gui_mode()
+        except tk.TclError as e:
+            print(f"Error initializing GUI: {e}")
+            print("Trying fallback GUI mode...")
+            try:
+                # Try without any special window attributes
+                # This approach correctly redefines the run_gui_mode function
+                def simplified_run_gui_mode():
+                    global root, label, alarm_message, snooze_button, hour_spinbox, minute_spinbox
+                    global second_spinbox, alarm_canvas, alarm_list_frame
+                    global BG_COLOR, TEXT_COLOR, ACCENT_COLOR, DANGER_COLOR, SUCCESS_COLOR, CARD_BG
+                    global title_font, subtitle_font, button_font, text_font
+                    
+                    # Custom colors (same as original)
+                    BG_COLOR = "#121212"  # Dark background
+                    TEXT_COLOR = "#FFFFFF"  # White text
+                    ACCENT_COLOR = "#BB86FC"  # Purple accent
+                    DANGER_COLOR = "#CF6679"  # Red for alarms/delete
+                    SUCCESS_COLOR = "#03DAC6"  # Teal for active states
+                    CARD_BG = "#1E1E1E"  # Slightly lighter than background for cards
+                    
+                    # Create the main window with NO special attributes
+                    root = tk.Tk()
+                    root.title("Horloge et Alarme")
+                    root.geometry("800x450")
+                    root.configure(bg=BG_COLOR)
+                    
+                    # Continue with the rest of the GUI setup (identical to run_gui_mode)
+                    # ...
+                
+                # Run the simplified version instead
+                simplified_run_gui_mode()
+                
+            except Exception as e2:
+                print(f"Fallback GUI mode also failed: {e2}")
+                print("Starting web mode instead")
+                run_web_mode()

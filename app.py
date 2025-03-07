@@ -52,6 +52,8 @@ def launch_interface_fullscreen():
         env = os.environ.copy()
         env['PYTHONUNBUFFERED'] = '1'  # Disable output buffering
         env['ALARM_DEBUG'] = '1'  # Add debug flag for our code
+        env['DISPLAY'] = os.environ.get('DISPLAY', ':0')  # Ensure X display is set
+        env['XAUTHORITY'] = os.environ.get('XAUTHORITY', os.path.expanduser('~/.Xauthority'))
         
         # Launch with stderr and stdout redirected to see any errors
         interface_process = subprocess.Popen(
