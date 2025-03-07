@@ -316,45 +316,59 @@ alarms_file = "{ALARMS_FILE}"
 index = {index}
 alarms = []
 
-if os.path.exists(alarms_file):
-    with open(alarms_file, 'r') as f:
-        alarms = json.load(f)
+try:
+    if os.path.exists(alarms_file):
+        with open(alarms_file, 'r') as f:
+            alarms = json.load(f)
 
-if 0 <= index < len(alarms):
-    # Toggle the alarm
-    alarms[index]["active"] = not alarms[index]["active"]
-    status = "activated" if alarms[index]["active"] else "deactivated"
-    message = f"Alarm at {{alarms[index]['time']}} {{status}}"
-    
-    # If deactivating an alarm that matches the current time, also clear alarm state
-    if not alarms[index]["active"]:
-        current_state = get_state()
-        current_time = time.strftime('%H:%M:%S')
+    if 0 <= index < len(alarms):
+        # Toggle the alarm
+        alarms[index]["active"] = not alarms[index]["active"]
+        status = "activated" if alarms[index]["active"] else "deactivated"
+        message = f"Alarm at {{alarms[index]['time']}} {{status}}"
         
-        if current_state["alarm_active"] and alarms[index]["time"] == current_time:
-            clear_state()
-            print("Cleared alarm state because matching alarm was deactivated")
-    
-    # Save changes
-    with open(alarms_file, 'w') as f:
-        json.dump(alarms, f)
-        f.flush()
-        os.fsync(f.fileno())
-    print(message)
-    
-    # Also ensure file is properly flushed to disk
-    os.sync()
-else:
-    message = "Invalid alarm index"
-    print(message)
+        # If deactivating an alarm that matches the current time, also clear alarm state
+        if not alarms[index]["active"]:
+            current_state = get_state()
+            current_time = time.strftime('%H:%M:%S')
+            
+            if current_state["alarm_active"] and alarms[index]["time"] == current_time:
+                clear_state()
+                print("Cleared alarm state because matching alarm was deactivated")
+        
+        # Save changes
+        with open(alarms_file, 'w') as f:
+            json.dump(alarms, f)
+            f.flush()
+            os.fsync(f.fileno())
+        print(message)
+        
+        # Also ensure file is properly flushed to disk
+        os.sync()
+    else:
+        message = "Invalid alarm index"
+        print(message)
+except Exception as e:
+    print(f"Error: {{e}}")
+    message = f"Error: {{e}}"
 '''],
             capture_output=True,
             text=True
         )
         
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        
+        # Check if there was an error in the Python script
+        if "Error:" in stdout or stderr:
+            return jsonify({
+                "status": "error",
+                "message": stdout if "Error:" in stdout else stderr
+            })
+        
         return jsonify({
             "status": "success",
-            "message": result.stdout.strip()
+            "message": stdout
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})

@@ -427,17 +427,27 @@ def toggle_alarm(index):
             current_time = time.strftime('%H:%M:%S')
             if alarms[index]["time"] == current_time:
                 print("Clearing active alarm state because this alarm was just disabled")
-                # Instead of directly calling snooze_alarm(), use reset_alarm_state()
-                # which has proper checking for GUI components
-                reset_alarm_state()
+                # Use try/except to handle the case when we're in web mode
+                try:
+                    # Use reset_alarm_state which has better error handling
+                    reset_alarm_state()
+                except Exception as e:
+                    print(f"Non-critical error resetting alarm state: {e}")
+                    # Still clear the state
+                    clear_state()
+                    alarm_active = False
         
         save_alarms()
         
-        if not WEB_MODE and 'styled_update_alarm_list' in globals():
-            try:
-                styled_update_alarm_list()
-            except Exception as e:
-                print(f"Error updating alarm list after toggle: {e}")
+        # Only try to update the UI if we're in GUI mode and the UI has been initialized
+        if not WEB_MODE:
+            # Check if styled_update_alarm_list is available and alarm_list_frame is defined
+            if 'styled_update_alarm_list' in globals() and 'alarm_list_frame' in globals():
+                try:
+                    styled_update_alarm_list()
+                except Exception as e:
+                    print(f"Non-critical error updating alarm list: {e}")
+        
         return status
     except Exception as e:
         print(f"Error toggling alarm: {e}")

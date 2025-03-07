@@ -321,26 +321,71 @@ function checkAlarmsUpdated() {
 
 // Add toggle alarm functionality
 function toggleAlarm(index) {
+    // First, find the button that was clicked
+    const buttons = document.querySelectorAll(`#alarmList tr:nth-child(${index + 1}) button`);
+    const toggleBtn = buttons[0]; // First button in the row is the toggle button
+    const statusCell = document.querySelector(`#alarmList tr:nth-child(${index + 1}) td:nth-child(2)`);
+    
+    // Immediately update UI to provide feedback (we'll revert if the server call fails)
+    const isCurrentlyActive = toggleBtn.textContent === '🔕';
+    
+    // Toggle the appearance
+    if (isCurrentlyActive) {
+        // Currently active, switching to inactive
+        toggleBtn.textContent = '🔔';
+        toggleBtn.title = 'Enable';
+        toggleBtn.className = 'btn btn-sm btn-secondary';
+        if (statusCell) {
+            statusCell.textContent = 'Inactive';
+            statusCell.className = 'status-inactive';
+        }
+    } else {
+        // Currently inactive, switching to active
+        toggleBtn.textContent = '🔕';
+        toggleBtn.title = 'Disable';
+        toggleBtn.className = 'btn btn-sm btn-success';
+        if (statusCell) {
+            statusCell.textContent = 'Active';
+            statusCell.className = 'status-active';
+        }
+    }
+    
+    // Add a "pending" visual indicator
+    toggleBtn.classList.add('refreshing');
+    
+    // Now make the actual server request
     fetch(`/alarm/${index}/toggle`, {
         method: 'POST'
     })
     .then(response => response.json())
     .then(data => {
+        // Remove the pending indicator
+        toggleBtn.classList.remove('refreshing');
+        
         if (data.status === 'success') {
-            loadAlarms(); // Refresh alarm list
+            // Server succeeded, append output message
             appendOutput(data.message);
             
             // Also check the alarm state after toggling
             checkAlarmState();
         } else {
-            alert('Error: ' + data.message);
+            console.error('Error toggling alarm:', data.message);
+            appendOutput(`Warning: ${data.message}`);
+            // Revert the UI change since the server call failed
+            loadAlarms();
         }
     })
     .catch(error => {
+        // Remove the pending indicator
+        toggleBtn.classList.remove('refreshing');
+        
         console.error('Error:', error);
-        alert('An error occurred while toggling the alarm');
+        appendOutput('Error toggling alarm - see console for details');
+        // Revert the UI change since the network call failed
+        loadAlarms();
     });
 }
+
 function startAlarmStatePolling() {
     // Poll every second to check if an alarm is active
     alarmStateInterval = setInterval(checkAlarmState, 1000);
