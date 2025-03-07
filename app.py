@@ -310,7 +310,7 @@ def toggle_alarm(index):
         # Execute a Python script to toggle the alarm
         result = subprocess.run(
             [sys.executable, '-c', f'''
-import json, os
+import json, os, time
 from alarm_state import clear_state, set_state, get_state
 alarms_file = "{ALARMS_FILE}"
 index = {index}
@@ -326,15 +326,24 @@ if 0 <= index < len(alarms):
     status = "activated" if alarms[index]["active"] else "deactivated"
     message = f"Alarm at {{alarms[index]['time']}} {{status}}"
     
-    # If deactivating and this alarm was active, clear alarm state
-    current_state = get_state()
-    if current_state["alarm_active"] and not alarms[index]["active"]:
-        clear_state()
+    # If deactivating an alarm that matches the current time, also clear alarm state
+    if not alarms[index]["active"]:
+        current_state = get_state()
+        current_time = time.strftime('%H:%M:%S')
+        
+        if current_state["alarm_active"] and alarms[index]["time"] == current_time:
+            clear_state()
+            print("Cleared alarm state because matching alarm was deactivated")
     
     # Save changes
     with open(alarms_file, 'w') as f:
         json.dump(alarms, f)
+        f.flush()
+        os.fsync(f.fileno())
     print(message)
+    
+    # Also ensure file is properly flushed to disk
+    os.sync()
 else:
     message = "Invalid alarm index"
     print(message)

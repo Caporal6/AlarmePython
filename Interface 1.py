@@ -14,6 +14,31 @@ DEBUG_MODE = os.environ.get('ALARM_DEBUG', '0') == '1'
 # Flag to check if we're running in web mode
 WEB_MODE = os.environ.get('WEB_MODE', '0') == '1'
 
+def reset_alarm_state():
+    """Reset the alarm state if it gets out of sync"""
+    global alarm_active
+    
+    # Clear the shared state
+    clear_state()
+    
+    # Reset local state
+    alarm_active = False
+    
+    if not WEB_MODE:
+        if 'alarm_message' in globals():
+            alarm_message.config(text="")
+        # Fix this line - remove the 'vars()' check
+        if 'snooze_button' in globals():
+            try:
+                snooze_button.pack_forget()
+            except Exception as e:
+                # Silently catch any errors to prevent them from propagating
+                if DEBUG_MODE:
+                    print(f"Non-critical error hiding snooze button: {e}")
+    
+    print("Alarm state has been reset")
+    return True
+
 if DEBUG_MODE:
     print("Debug mode enabled")
 
@@ -152,14 +177,6 @@ def force_refresh_alarms():
         print(f"Warning: Alarms file {ALARMS_FILE} does not exist")
         return False
     
-    # Try reading the file directly first to check content
-    try:
-        with open(ALARMS_FILE, 'r') as f:
-            file_content = f.read()
-            print(f"Alarm file raw content: {file_content}")
-    except Exception as e:
-        print(f"Error reading alarm file directly: {e}")
-    
     # Now properly load alarms
     try:
         if os.path.exists(ALARMS_FILE):
@@ -179,9 +196,14 @@ def force_refresh_alarms():
                 alarms = valid_alarms
                 print(f"Successfully loaded {len(alarms)} alarms from file")
                 
-                # Update the display if in GUI mode
-                if not WEB_MODE and 'styled_update_alarm_list' in globals():
-                    styled_update_alarm_list()
+                # Only update the display if we're in GUI mode AND the GUI has been initialized
+                # Check if we're in GUI mode and alarm_list_frame exists in globals()
+                if not WEB_MODE and 'alarm_list_frame' in globals() and 'alarm_canvas' in globals():
+                    try:
+                        # Use the global styled_update_alarm_list function
+                        globals()['styled_update_alarm_list']()
+                    except Exception as e:
+                        print(f"Error updating alarm list: {e}")
                     
                 return True
         else:
@@ -253,60 +275,69 @@ def check_alarm(current_time):
     # Check if we're running in GUI mode and if snooze_button exists
     has_snooze_button = 'snooze_button' in globals() if not WEB_MODE else False
     
-    # First check the global alarm state from file (if toggled from web)
-    state = get_state()
-    
-    # If alarm is active in the shared state but not locally, sync the local state
-    if state["alarm_active"] and not alarm_active:
-        alarm_active = True
-        if not WEB_MODE:
-            alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
-            if has_snooze_button:
-                snooze_button.pack(pady=10)  # Affiche le bouton Snooze
-        else:
-            print(f"🔔 ALARM TRIGGERED from web: {state['message']}")
-        return
-    
-    # If alarm was snoozed from web but still active locally, sync the local state
-    if not state["alarm_active"] and alarm_active:
-        alarm_active = False
-        if not WEB_MODE:
-            alarm_message.config(text="")
-            if has_snooze_button:
-                snooze_button.pack_forget()
-    
-    # Regular alarm checking logic
-    for alarm in alarms:
-        if alarm["active"] and alarm["time"] == current_time and not alarm_active:
+    try:
+        # First check the global alarm state from file (if toggled from web)
+        state = get_state()
+        
+        # If alarm is active in the shared state but not locally, sync the local state
+        if state["alarm_active"] and not alarm_active:
+            alarm_active = True
             if not WEB_MODE:
                 alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
-                
-                # Only use snooze_button if it exists
                 if has_snooze_button:
                     snooze_button.pack(pady=10)  # Affiche le bouton Snooze
             else:
-                print(f"🔔 ALARM TRIGGERED: {alarm['time']}")
-            
-            # Set the shared state for the web interface to detect
-            set_state(True, f"Alarm triggered at {current_time}")
-            
-            alarm_active = True
-            return  # Affiche "YOUPIII" dès qu'une alarme est déclenchée
-    
-    if not alarm_active:
-        if not WEB_MODE:
-            alarm_message.config(text="")  # Efface le message si aucune alarme ne sonne
-            
-            # Only hide snooze_button if it exists
-            if has_snooze_button:
-                snooze_button.pack_forget()  # Cache le bouton Snooze
+                print(f"🔔 ALARM TRIGGERED from web: {state['message']}")
+            return
+        
+        # If alarm was snoozed from web but still active locally, sync the local state
+        if not state["alarm_active"] and alarm_active:
+            alarm_active = False
+            if not WEB_MODE:
+                alarm_message.config(text="")
+                if has_snooze_button:
+                    snooze_button.pack_forget()
+        
+        # Regular alarm checking logic
+        for alarm in alarms:
+            if alarm["active"] and alarm["time"] == current_time and not alarm_active:
+                if not WEB_MODE:
+                    alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
+                    
+                    # Only use snooze_button if it exists
+                    if has_snooze_button:
+                        snooze_button.pack(pady=10)  # Affiche le bouton Snooze
+                else:
+                    print(f"🔔 ALARM TRIGGERED: {alarm['time']}")
+                
+                # Set the shared state for the web interface to detect
+                set_state(True, f"Alarm triggered at {current_time}")
+                
+                alarm_active = True
+                return  # Affiche "YOUPIII" dès qu'une alarme est déclenchée
+        
+        if not alarm_active:
+            if not WEB_MODE:
+                alarm_message.config(text="")  # Efface le message si aucune alarme ne sonne
+                
+                # Only hide snooze_button if it exists
+                if has_snooze_button:
+                    snooze_button.pack_forget()  # Cache le bouton Snooze
+    except Exception as e:
+        print(f"Error in check_alarm: {e}")
+        # If an error occurs, try to recover by resetting the alarm state
+        if alarm_active:
+            print("Attempting to reset alarm state due to error")
+            reset_alarm_state()
 
 def snooze_alarm():
     """Désactive le message d'alarme."""
     global alarm_active
     if not WEB_MODE:
-        alarm_message.config(text="")
-        snooze_button.pack_forget()
+        if 'alarm_message' in globals():
+            alarm_message.config(text="")
+        if 'snooze_button' in globals():
+            snooze_button.pack_forget()
     else:
         print("Alarm snoozed")
     
@@ -380,14 +411,37 @@ def update_alarm_list():
 
 def toggle_alarm(index):
     """Active ou désactive une alarme."""
-    alarms[index]["active"] = not alarms[index]["active"]
-    status = "activated" if alarms[index]["active"] else "deactivated"
-    print(f"Alarm at {alarms[index]['time']} {status}")
-    save_alarms()
-    
-    if not WEB_MODE:
-        styled_update_alarm_list()
-    return status
+    global alarm_active
+    # Add bounds checking to avoid index errors
+    if index < 0 or index >= len(alarms):
+        print(f"Error: Invalid alarm index {index}")
+        return "error"
+        
+    try:
+        alarms[index]["active"] = not alarms[index]["active"]
+        status = "activated" if alarms[index]["active"] else "deactivated"
+        print(f"Alarm at {alarms[index]['time']} {status}")
+        
+        # If we're deactivating an alarm that is currently triggered, also clear the alarm state
+        if not alarms[index]["active"] and alarm_active:
+            current_time = time.strftime('%H:%M:%S')
+            if alarms[index]["time"] == current_time:
+                print("Clearing active alarm state because this alarm was just disabled")
+                # Instead of directly calling snooze_alarm(), use reset_alarm_state()
+                # which has proper checking for GUI components
+                reset_alarm_state()
+        
+        save_alarms()
+        
+        if not WEB_MODE and 'styled_update_alarm_list' in globals():
+            try:
+                styled_update_alarm_list()
+            except Exception as e:
+                print(f"Error updating alarm list after toggle: {e}")
+        return status
+    except Exception as e:
+        print(f"Error toggling alarm: {e}")
+        return "error"
 
 def edit_alarm(index, hour=None, minute=None, second=None):
     """Modifie l'heure d'une alarme."""
@@ -512,12 +566,6 @@ def styled_update_alarm_list():
     # Ajuste la zone de défilement
     alarm_canvas.update_idletasks()
 
-# Move styled_update_alarm_list to global scope for use by other functions
-globals()['styled_update_alarm_list'] = styled_update_alarm_list
-
-# Initial setup of alarms - ensure we're starting with the latest data
-force_refresh_alarms()
-styled_update_alarm_list()
 
 def force_refresh():
     """Force refresh alarms from file and update UI"""
@@ -812,8 +860,11 @@ def run_gui_mode():
         # Ajuste la zone de défilement
         alarm_canvas.update_idletasks()
     
-    # Initial setup of alarms
-    styled_update_alarm_list()
+    # Make styled_update_alarm_list accessible globally AFTER it's defined
+    globals()['styled_update_alarm_list'] = styled_update_alarm_list
+    
+    # Initial setup of alarms - NOW it's safe to do this
+    force_refresh_alarms()
     
     # Initialize GUI with periodic checks
     initialize_gui()
@@ -839,13 +890,6 @@ def initialize_gui():
     root.after(5000, periodic_alarm_check)
     update_time()
     monitor_file_changes()
-
-    try:
-        # Lancer l'application
-        root.mainloop()
-    finally:
-        observer.stop()
-        observer.join()
 
 def monitor_file_changes():
     """Monitor file changes to help with debugging"""
