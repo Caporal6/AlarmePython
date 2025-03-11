@@ -1,11 +1,40 @@
 import tkinter as tk
 import time 
-from gpiozero import LED, Button, Buzzer, DistanceSensor
+from gpiozero import LED, Button, Buzzer, DistanceSensor, AngularServo
 import random
 import Freenove_DHT as DHT
+import MPU6050 
+import math
 
+
+# Déclaration LED
+led = LED(6)
+
+myGPIO = 25
+SERVO_DELAY_SEC = 0.001
+myCorrection = 0.0
+maxPW = (2.5 + myCorrection) / 1000
+minPW = (0.5 - myCorrection) / 1000
+
+# Initialisation du servo avec un angle initial défini
+servo = AngularServo(myGPIO, initial_angle=0, min_angle=0, max_angle=180, min_pulse_width=minPW, max_pulse_width=maxPW)
+
+# ...existing code...
 # Liste pour stocker les alarmes
 alarms = []
+
+# Liste pour stocker les dernières distances mesurées
+distance_history = []
+stable_time = 0  # Timer pour la stabilité de l'alarme
+
+# Configuration de l'accéléromètre
+mpu = MPU6050.MPU6050()     # instancier un objet MPU6050
+accel = [0]*3               # tableau pour stocker les données de l'accéléromètre
+gyro = [0]*3                # tableau pour stocker les données du gyroscope
+
+# Initialisation de l'accéléromètre
+def setup():
+    mpu.dmp_initialize()    # initialiser le MPU6050
 
 #Declaration Buzzer 
 buzzer = Buzzer(18)
@@ -19,6 +48,8 @@ alarm_active = False
 
 #Declaration meteo et humidite
 DHTPin = 17
+
+
 
 
 
@@ -39,16 +70,29 @@ def check_alarm(current_time):
     for alarm in alarms:
         if alarm["active"] and alarm["time"] == current_time and not alarm_active:
             alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
-            # buzzer.on()
-            snooze_button.pack(pady=10)  # Affiche le bouton Snooze
+            led.on()
+            buzzer.on()
             alarm_active = True
-            distance_Prevue = random.uniform(0.2, 2) * 100  # Initialiser distance_Prevue en cm
+            distance_Prevue = random.uniform(0.2, 1.2) * 100  # Initialiser distance_Prevue en cm
             print(f"Distance prévue: {distance_Prevue:.2f} cm")
             distance()  # Démarre la mise à jour de la distance
+            snooze_button.pack(pady=10)  # Affiche le bouton Snooze
+            move_servo()  # Démarre le mouvement du servo
             return  # Affiche "YOUPIII" dès qu'une alarme est déclenchée
     if not alarm_active:
         alarm_message.config(text="")  # Efface le message si aucune alarme ne sonne
         snooze_button.pack_forget()  # Cache le bouton Snooze
+
+def move_servo():
+    """Fait faire des allers-retours au servo sans pause."""
+    for angle in range(0, 181, 1):
+        servo.angle = angle
+        time.sleep(SERVO_DELAY_SEC)
+    for angle in range(180, -1, -1):
+        servo.angle = angle
+        time.sleep(SERVO_DELAY_SEC)
+    if alarm_active:
+        root.after(1, move_servo)  # Continue le mouvement tant que l'alarme est active
 
 def snooze_alarm():
     """Désactive le message d'alarme."""
@@ -56,7 +100,9 @@ def snooze_alarm():
     alarm_message.config(text="")
     snooze_button.pack_forget()
     buzzer.off()
+    led.off()
     alarm_active = False
+    movement_warning_label.config(text="")  # Efface le message de mouvement excessif
 
 def set_alarm():
     """Ajoute une alarme avec l'heure sélectionnée."""
@@ -125,17 +171,80 @@ def delete_alarm(index):
     
     update_alarm_list()
 
+
+# Variables globales pour la dernière accélération et gyroscope
+last_accel = [0, 0, 0]
+last_gyro = [0, 0, 0]
+movement_threshold = 1000  # seuil de détection du mouvement normal
+excessive_movement_threshold = 15000  # seuil pour un mouvement excessif
+excessive_rotation_threshold = 2000  # seuil pour une rotation excessive
+movement_warning_label = None  # Assurez-vous que cette variable est bien initialisée
+
+# Fonction pour calculer la variation (changement) d'un vecteur entre deux points
+def calculate_variation(new_values, last_values):
+    return [abs(new_values[i] - last_values[i]) for i in range(len(new_values))]
+
+# Fonction améliorée pour vérifier les mouvements
+def check_movement():
+    global last_accel, last_gyro
+
+    accel = mpu.get_acceleration()  # récupérer les données de l'accéléromètre
+    gyro = mpu.get_rotation()  # récupérer les données du gyroscope
+    print(f"Accélération: {accel} Gyroscope: {gyro}")
+
+    # Calculer la variation de l'accélération et de la rotation par rapport aux dernières valeurs
+    accel_variation = calculate_variation(accel, last_accel)
+    gyro_variation = calculate_variation(gyro, last_gyro)
+
+    # Mettre à jour les dernières valeurs d'accélération et de rotation
+    last_accel = accel
+    last_gyro = gyro
+
+    # Calculer la magnitude de l'accélération et de la rotation pour déterminer l'intensité
+    accel_magnitude = math.sqrt(accel[0]**2 + accel[1]**2 + accel[2]**2)
+    gyro_magnitude = math.sqrt(gyro[0]**2 + gyro[1]**2 + gyro[2]**2)
+
+    # Si la variation d'accélération ou de rotation dépasse les seuils, c'est un mouvement excessif
+    if any(variation > excessive_movement_threshold for variation in accel_variation) or any(variation > excessive_rotation_threshold for variation in gyro_variation):
+        movement_warning_label.config(text="Mouvement excessif détecté!")
+        return False  # Mouvement excessif détecté
+    # Sinon, si l'intensité de l'accélération ou de la rotation est suffisante, il y a un mouvement
+    elif accel_magnitude > movement_threshold or gyro_magnitude > movement_threshold:
+        return True  # Mouvement détecté
+    return False  # Aucun mouvement détecté
+
+# Fonction pour vérifier la distance et activer les alertes
 def distance():
-    global alarm_active
+    global alarm_active, correct_distance_time
+
     if alarm_active:
+
         current_distance = ultrasonic.distance * 100  # Convertir en cm
-        if current_distance < distance_Prevue - 10 or current_distance > distance_Prevue + 10:
-            distance_label.config(text=f"Trop proche: {current_distance:.2f} cm")
-        elif current_distance > 200:
-            distance_label.config(text=f"Trop loin: {current_distance:.2f} cm")
+        if not check_movement():
+            movement_warning_label.config(text="Mouvement détecté!")
         else:
-            distance_label.config(text=f"Bravo, vous êtes à la bonne distance: {current_distance:.2f} cm")
-        root.after(1000, distance)  # Planifie la prochaine mise à jour dans 1 seconde
+            movement_warning_label.config(text="")
+            if current_distance < distance_Prevue - 10:
+                distance_label.config(text=f"Trop proche: {current_distance:.2f} cm")
+                correct_distance_time = 0  # Réinitialiser le timer si la distance est incorrecte
+            elif current_distance > distance_Prevue + 10:
+                distance_label.config(text=f"Trop loin: {current_distance:.2f} cm")
+                correct_distance_time = 0  # Réinitialiser le timer si la distance est incorrecte
+            else:
+                distance_label.config(text=f"Vous êtes à la bonne distance: {current_distance:.2f} cm")
+                correct_distance_time += 1  # Incrémenter le timer si la distance est correcte
+                if correct_distance_time >= 3:  # Vérifier si l'utilisateur est à la bonne distance pendant 3 secondes
+                    snooze_alarm()  # Mettre l'alarme en veille
+                    distance_label.config(text="")  # Afficher un message
+                    return
+        root.after(1000, distance)  # Planifie la prochaine vérification
+
+
+
+
+
+# Initialize the correct distance timer
+correct_distance_time = 0
 
 
 
@@ -200,7 +309,7 @@ alarm_message = tk.Label(root, text="", font=('Helvetica', 20), fg='red', bg='bl
 alarm_message.pack(pady=10)
 
 # Bouton Snooze
-snooze_button = tk.Button(root, text="Snooze", command=snooze_alarm)
+snooze_button = tk.Button(root, text="Arret", command=snooze_alarm)
 
 # Labels à gauche de l'heure
 left_label1 = tk.Label(left_frame, text="Humidité: ", font=('Helvetica', 20), fg='white', bg='black')
@@ -209,16 +318,15 @@ left_label1.pack(pady=5)
 left_label2 = tk.Label(left_frame, text="Température: ", font=('Helvetica', 20), fg='white', bg='black')
 left_label2.pack(pady=5)
 
-# Labels à droite de l'heure
-right_label1 = tk.Label(right_frame, text="Label Droite 1", font=('Helvetica', 20), fg='white', bg='black')
-right_label1.pack(pady=5)
 
-right_label2 = tk.Label(right_frame, text="Label Droite 2", font=('Helvetica', 20), fg='white', bg='black')
-right_label2.pack(pady=5)
 
 #label pour la distance
 distance_label = tk.Label(right_frame, text="Distance: ", font=('Helvetica', 20), fg='white', bg='black')
 distance_label.pack(pady=5)
+
+# Ajout du label pour avertir de trop grands déplacements
+movement_warning_label = tk.Label(right_frame, text="", font=('Helvetica', 16), fg='yellow', bg='black')
+movement_warning_label.pack(pady=5)
 
 # Affichage de l'heure
 label = tk.Label(time_frame, font=('Helvetica', 48), fg='white', bg='black')
