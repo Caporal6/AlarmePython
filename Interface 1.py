@@ -14,6 +14,193 @@ DEBUG_MODE = os.environ.get('ALARM_DEBUG', '0') == '1'
 # Flag to check if we're running in web mode
 WEB_MODE = os.environ.get('WEB_MODE', '0') == '1'
 
+# MQTT client for receiving commands from web interface
+mqtt_client = None
+
+def setup_mqtt_client():
+    """Set up MQTT client to listen for commands from web interface"""
+    global mqtt_client
+    try:
+        import paho.mqtt.client as mqtt
+        
+        # Create MQTT client
+        client_id = f'alarm-gui-{os.getpid()}'
+        mqtt_client = mqtt.Client(client_id)
+        
+        # Define callbacks
+        def on_connect(client, userdata, flags, rc):
+            print(f"MQTT Connected with result code {rc}")
+            # Subscribe to all command topics with QoS 1 to ensure reliability
+            client.subscribe("alarm/request/#", qos=1)
+            # Also subscribe to the alarm/list topic to stay in sync with the web
+            client.subscribe("alarm/list", qos=1)
+            client.subscribe("alarm/added", qos=1)
+            client.subscribe("alarm/deleted", qos=1)
+            client.subscribe("alarm/toggled", qos=1)
+            
+            # Publish the current list of alarms so the web gets the latest state
+            try:
+                client.publish("alarm/list", json.dumps(alarms), qos=1, retain=True)
+                print(f"Published {len(alarms)} alarms to MQTT on connect")
+            except Exception as e:
+                print(f"Error publishing alarm list on connect: {e}")
+        
+        def on_message(client, userdata, msg):
+            global alarms  # Move this to the beginning of the function
+            try:
+                topic = msg.topic
+                payload_text = msg.payload.decode()
+                
+                # Skip empty messages
+                if not payload_text.strip():
+                    return
+                    
+                try:
+                    payload = json.loads(payload_text)
+                    print(f"Received MQTT message on {topic}: {payload}")
+                except json.JSONDecodeError:
+                    print(f"Received non-JSON MQTT message on {topic}: {payload_text}")
+                    payload = {"message": payload_text}
+                
+                # Process commands from web interface
+                if topic == "alarm/request/add":
+                    try:
+                        hour = int(payload.get('hour', 0))
+                        minute = int(payload.get('minute', 0))
+                        second = int(payload.get('second', 0))
+                        print(f"Adding alarm from MQTT: {hour:02d}:{minute:02d}:{second:02d}")
+                        success = set_alarm(hour, minute, second)
+                        if success:
+                            print(f"Alarm added for {hour:02d}:{minute:02d}:{second:02d}")
+                            # Force refresh UI after receiving MQTT command
+                            if not WEB_MODE and 'styled_update_alarm_list' in globals():
+                                try:
+                                    globals()['styled_update_alarm_list']()
+                                except Exception as e:
+                                    print(f"Non-critical error updating UI: {e}")
+                        else:
+                            print(f"Failed to add alarm for {hour:02d}:{minute:02d}:{second:02d}")
+                    except Exception as e:
+                        print(f"Error handling add alarm request: {e}")
+                
+                elif topic == "alarm/request/delete":
+                    try:
+                        index = int(payload.get('index', -1))
+                        print(f"Deleting alarm at index {index} from MQTT")
+                        if index >= 0 and index < len(alarms):
+                            success = delete_alarm(index)
+                            print(f"Alarm at index {index} deleted: {success}")
+                            # Force refresh UI after receiving MQTT command
+                            if not WEB_MODE and 'styled_update_alarm_list' in globals():
+                                try:
+                                    globals()['styled_update_alarm_list']()
+                                except Exception as e:
+                                    print(f"Non-critical error updating UI: {e}")
+                        else:
+                            print(f"Invalid alarm index: {index}")
+                    except Exception as e:
+                        print(f"Error handling delete alarm request: {e}")
+                
+                elif topic == "alarm/request/toggle":
+                    try:
+                        index = int(payload.get('index', -1))
+                        print(f"Toggling alarm at index {index} from MQTT")
+                        if index >= 0 and index < len(alarms):
+                            status = toggle_alarm(index)
+                            print(f"Alarm at index {index} toggled: {status}")
+                            # Force refresh UI after receiving MQTT command
+                            if not WEB_MODE and 'styled_update_alarm_list' in globals():
+                                try:
+                                    globals()['styled_update_alarm_list']()
+                                except Exception as e:
+                                    print(f"Non-critical error updating UI: {e}")
+                        else:
+                            print(f"Invalid alarm index: {index}")
+                    except Exception as e:
+                        print(f"Error handling toggle alarm request: {e}")
+                
+                elif topic == "alarm/request/snooze":
+                    try:
+                        print("Snoozing alarm from MQTT")
+                        snooze_alarm()
+                        print("Alarm snoozed from web interface")
+                    except Exception as e:
+                        print(f"Error handling snooze request: {e}")
+                
+                elif topic == "alarm/request/list":
+                    try:
+                        # Publish current alarm list
+                        if mqtt_client:
+                            mqtt_client.publish("alarm/list", json.dumps(alarms), qos=1)
+                            print(f"Published {len(alarms)} alarms to MQTT")
+                    except Exception as e:
+                        print(f"Error handling list request: {e}")
+                        
+                # Also handle direct changes to alarms from the web interface
+                elif topic == "alarm/list":
+                    try:
+                        if isinstance(payload, list):
+                            print(f"Received alarm list from MQTT with {len(payload)} alarms")
+                            # Update our local alarms if the source is not the same as this client
+                            # This prevents circular updates
+                            if msg.retain == 0:  # Only process non-retained messages to avoid loops
+                                # We're receiving a fresh list from the web interface
+                                print("Processing updated alarm list from MQTT")
+                                
+                                # Check if the alarm list is different from our current list
+                                if json.dumps(alarms) != json.dumps(payload):
+                                    # Update our local alarms
+                                    alarms = payload
+                                    # Save the updated list
+                                    save_alarms()
+                                    # Refresh UI
+                                    if not WEB_MODE and 'styled_update_alarm_list' in globals():
+                                        try:
+                                            globals()['styled_update_alarm_list']()
+                                        except Exception as e:
+                                            print(f"Non-critical error updating UI: {e}")
+                    except Exception as e:
+                        print(f"Error handling alarm list update: {e}")
+                        
+            except Exception as e:
+                print(f"Error handling MQTT message: {e}")
+        
+        def on_disconnect(client, userdata, rc):
+            print(f"MQTT disconnected with result code {rc}")
+            # Try to reconnect if it wasn't a clean disconnect
+            if rc != 0:
+                print("Attempting to reconnect...")
+                try:
+                    client.reconnect()
+                except Exception as e:
+                    print(f"Error reconnecting: {e}")
+        
+        # Set callbacks
+        mqtt_client.on_connect = on_connect
+        mqtt_client.on_message = on_message
+        mqtt_client.on_disconnect = on_disconnect
+        
+        # Configure reliable QoS and session persistence
+        mqtt_client.max_inflight_messages_set(20)
+        mqtt_client.max_queued_messages_set(100)
+        
+        # Connect to broker with clean_session=False for persistence
+        # Use a longer keepalive for stability (60 seconds)
+        print("Connecting to MQTT broker...")
+        mqtt_client.connect("localhost", 1883, 60)
+        
+        # Start MQTT client in a background thread
+        mqtt_client.loop_start()
+        
+        print("MQTT client started for receiving web commands")
+        return True
+    except ImportError:
+        print("paho-mqtt not installed, MQTT bidirectional control disabled")
+        return False
+    except Exception as e:
+        print(f"Failed to set up MQTT client: {e}")
+        return False
+
 def reset_alarm_state():
     """Reset the alarm state if it gets out of sync"""
     global alarm_active
@@ -98,6 +285,51 @@ except ImportError as e:
     def clear_state():
         print("Clearing alarm state (fallback)")
         return True
+
+def publish_alarm_added(time, success):
+    """Publish alarm added event to MQTT"""
+    if mqtt_client:
+        try:
+            mqtt_client.publish("alarm/added", json.dumps({
+                "time": time,
+                "success": success,
+                "message": f"Alarm {'added' if success else 'already exists'} for {time}"
+            }))
+        except Exception as e:
+            print(f"Error publishing alarm added event: {e}")
+
+def publish_alarm_toggled(index, active):
+    """Publish alarm toggled event to MQTT"""
+    if mqtt_client:
+        try:
+            mqtt_client.publish("alarm/toggled", json.dumps({
+                "index": index,
+                "active": active,
+                "time": alarms[index]["time"] if index < len(alarms) else "",
+                "message": f"Alarm {'activated' if active else 'deactivated'}"
+            }))
+        except Exception as e:
+            print(f"Error publishing alarm toggled event: {e}")
+
+def publish_alarm_deleted(index, time):
+    """Publish alarm deleted event to MQTT"""
+    if mqtt_client:
+        try:
+            mqtt_client.publish("alarm/deleted", json.dumps({
+                "index": index,
+                "time": time,
+                "message": f"Alarm at {time} deleted"
+            }))
+        except Exception as e:
+            print(f"Error publishing alarm deleted event: {e}")
+
+def publish_alarm_list():
+    """Publish current alarm list to MQTT"""
+    if mqtt_client:
+        try:
+            mqtt_client.publish("alarm/list", json.dumps(alarms))
+        except Exception as e:
+            print(f"Error publishing alarm list: {e}")
 
 # File to store alarms data
 ALARMS_FILE = "alarms.json"
@@ -344,11 +576,22 @@ def snooze_alarm():
     # Clear the shared alarm state
     clear_state()
     
+    # MQTT publish
+    if mqtt_client:
+        try:
+            mqtt_client.publish("alarm/state", json.dumps({
+                "alarm_active": False,
+                "timestamp": time.time(),
+                "message": "Alarm snoozed"
+            }))
+        except Exception as e:
+            print(f"Error publishing alarm state: {e}")
+    
     alarm_active = False
 
 def set_alarm(hour, minute, second):
     """Ajoute une alarme avec l'heure sélectionnée."""
-    if WEB_MODE:
+    if WEB_MODE and hour is not None and minute is not None and second is not None:
         alarm_time = f"{hour:02d}:{minute:02d}:{second:02d}"
     else:
         alarm_time = get_wheel_time()
@@ -367,11 +610,16 @@ def set_alarm(hour, minute, second):
         alarms.append(new_alarm)
         print(f"New alarm set for {alarm_time}")
         save_alarms()
+        # MQTT publish
+        publish_alarm_added(alarm_time, True)
+        publish_alarm_list()
         if not WEB_MODE:
             styled_update_alarm_list()
         return True
     else:
         print(f"Alarm for {alarm_time} already exists")
+        # MQTT publish event for duplicate alarm
+        publish_alarm_added(alarm_time, False)
         return False
 
 def update_alarm_list():
@@ -422,11 +670,15 @@ def toggle_alarm(index):
         status = "activated" if alarms[index]["active"] else "deactivated"
         print(f"Alarm at {alarms[index]['time']} {status}")
         
+        # MQTT publish
+        publish_alarm_toggled(index, alarms[index]["active"])
+        publish_alarm_list()
+        
         # If we're deactivating an alarm that is currently triggered, also clear the alarm state
         if not alarms[index]["active"] and alarm_active:
             current_time = time.strftime('%H:%M:%S')
             if alarms[index]["time"] == current_time:
-                print("Clearing active alarm state because this alarm was just disabled")
+                print("Clearing active alarm state because matching alarm was deactivated")
                 # Use try/except to handle the case when we're in web mode
                 try:
                     # Use reset_alarm_state which has better error handling
@@ -471,9 +723,18 @@ def edit_alarm(index, hour=None, minute=None, second=None):
 
 def delete_alarm(index):
     """Supprime une alarme."""
+    if index < 0 or index >= len(alarms):
+        print(f"Error: Invalid alarm index {index}")
+        return False
+        
     deleted_time = alarms[index]["time"]
     del alarms[index]
     print(f"Alarm at {deleted_time} deleted")
+    
+    # MQTT publish
+    publish_alarm_deleted(index, deleted_time)
+    publish_alarm_list()
+    
     save_alarms()
     
     if not WEB_MODE:
@@ -1026,6 +1287,9 @@ def run_web_mode():
 
 if __name__ == "__main__":
     print(f"Starting in {'web' if WEB_MODE else 'GUI'} mode")
+    
+    # Set up MQTT client to receive commands from web interface
+    setup_mqtt_client()
     
     if WEB_MODE:
         run_web_mode()

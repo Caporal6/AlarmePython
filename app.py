@@ -7,14 +7,101 @@ import time
 import threading
 import atexit
 import json
+import paho.mqtt.client as mqtt
+from flask_mqtt import Mqtt
 
 app = Flask(__name__)
+
+# MQTT Configuration
+app.config['MQTT_BROKER_URL'] = 'localhost'  # Use your MQTT broker IP
+app.config['MQTT_BROKER_PORT'] = 1883  # Default port for MQTT
+app.config['MQTT_USERNAME'] = ''  # Set if your broker requires authentication
+app.config['MQTT_PASSWORD'] = ''  # Set if your broker requires authentication
+app.config['MQTT_KEEPALIVE'] = 60  # Increased keepalive for better reliability
+app.config['MQTT_TLS_ENABLED'] = False
+app.config['MQTT_CLEAN_SESSION'] = False  # Maintain persistent session
+
+# Initialize Flask-MQTT extension with improved error handling
+try:
+    mqtt_client = Mqtt(app)
+    print("MQTT client initialized successfully")
+except Exception as e:
+    print(f"Error initializing MQTT client: {e}")
+    # Create a fallback MQTT client that does nothing
+    class FallbackMqtt:
+        def publish(self, *args, **kwargs):
+            print(f"MQTT publish attempted but MQTT is not available: {args}")
+    mqtt_client = FallbackMqtt()
 
 script_process = None
 output_buffer = []
 process_lock = threading.Lock()
 ALARMS_FILE = "alarms.json"
 interface_process = None  # Store the process ID of the interface window
+
+# Set up MQTT topics
+TOPIC_ALARMS = "alarm/list"
+TOPIC_ALARM_ADDED = "alarm/added"
+TOPIC_ALARM_DELETED = "alarm/deleted"
+TOPIC_ALARM_TOGGLED = "alarm/toggled"
+TOPIC_ALARM_STATE = "alarm/state"
+TOPIC_OUTPUT = "alarm/output"
+
+@mqtt_client.on_connect()
+def handle_connect(client, userdata, flags, rc):
+    """Called when the MQTT client connects to the broker"""
+    print(f"Connected to MQTT broker with result code {rc}")
+    # Subscribe to client requests
+    mqtt_client.subscribe("alarm/request/#")
+
+@mqtt_client.on_message()
+def handle_mqtt_message(client, userdata, message):
+    """Process incoming MQTT messages"""
+    topic = message.topic
+    payload = message.payload.decode()
+    
+    print(f"Received message on topic {topic}: {payload}")
+    
+    # Process different request types
+    if topic == "alarm/request/list":
+        # Client is requesting alarm list
+        publish_alarms()
+    elif topic == "alarm/request/add":
+        # Client is adding an alarm
+        try:
+            data = json.loads(payload)
+            hour = int(data.get('hour', 0))
+            minute = int(data.get('minute', 0))
+            second = int(data.get('second', 0))
+            add_alarm_mqtt(hour, minute, second)
+        except Exception as e:
+            print(f"Error processing add alarm request: {e}")
+            mqtt_client.publish("alarm/error", f"Failed to add alarm: {str(e)}")
+    elif topic == "alarm/request/delete":
+        # Client is deleting an alarm
+        try:
+            index = int(json.loads(payload).get('index', -1))
+            if index >= 0:
+                delete_alarm_mqtt(index)
+        except Exception as e:
+            print(f"Error processing delete alarm request: {e}")
+            mqtt_client.publish("alarm/error", f"Failed to delete alarm: {str(e)}")
+    elif topic == "alarm/request/toggle":
+        # Client is toggling an alarm
+        try:
+            index = int(json.loads(payload).get('index', -1))
+            if index >= 0:
+                toggle_alarm_mqtt(index)
+        except Exception as e:
+            print(f"Error processing toggle alarm request: {e}")
+            mqtt_client.publish("alarm/error", f"Failed to toggle alarm: {str(e)}")
+    elif topic == "alarm/request/snooze":
+        # Client is snoozing an alarm
+        try:
+            snooze_alarm_mqtt()
+        except Exception as e:
+            print(f"Error processing snooze request: {e}")
+            mqtt_client.publish("alarm/error", f"Failed to snooze alarm: {str(e)}")
 
 def read_output(process):
     """Read output from the process and store it in buffer"""
@@ -31,6 +118,9 @@ def read_output(process):
             line_str = line.decode('utf-8').strip()
             output_buffer.append(line_str)
             print(f"Process output: {line_str}")  # Log to console for debugging
+            
+            # Publish output to MQTT
+            mqtt_client.publish(TOPIC_OUTPUT, line_str)
         except Exception as e:
             print(f"Error reading process output: {e}")
             break
@@ -223,6 +313,12 @@ def get_alarms():
             return jsonify({"status": "success", "alarms": [], "timestamp": 0, "content_hash": 0})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
+
+
+@app.route('/mqtt_test')
+def mqtt_test():
+    """Test page for MQTT WebSocket connection"""
+    return render_template('test.html')
 
 @app.route('/alarm', methods=['POST'])
 def add_alarm():
@@ -474,20 +570,266 @@ def cleanup():
 # Register cleanup function to be called on exit
 atexit.register(cleanup)
 
+# MQTT message broker for WebSockets
+@app.route('/mqtt')
+def mqtt_status():
+    """Return MQTT WebSocket connection details"""
+    # Get the server's hostname
+    host = request.host.split(':')[0]  # Remove port if present
+    
+    return jsonify({
+        "broker_url": host,  # Use the same host as the web server
+        "broker_websocket_port": 9001,  # WebSocket port (must match Mosquitto config)
+        "use_ssl": request.is_secure  # Match the security of the current connection
+    })
+
+# Additional MQTT functions to publish alarm updates to topics
+def publish_alarms():
+    """Publish the current list of alarms to MQTT"""
+    try:
+        if os.path.exists(ALARMS_FILE):
+            with open(ALARMS_FILE, 'r') as f:
+                alarms = json.load(f)
+                mqtt_client.publish(TOPIC_ALARMS, json.dumps(alarms))
+                print(f"Published {len(alarms)} alarms to MQTT")
+                return True
+        else:
+            mqtt_client.publish(TOPIC_ALARMS, "[]")
+            return True
+    except Exception as e:
+        print(f"Error publishing alarms to MQTT: {e}")
+        return False
+
+def add_alarm_mqtt(hour, minute, second):
+    """Add alarm via MQTT request"""
+    try:
+        # Format the time properly with leading zeros
+        alarm_time = f"{hour:02d}:{minute:02d}:{second:02d}"
+        print(f"MQTT: Adding alarm for {alarm_time}")
+        
+        # Load existing alarms
+        alarms = []
+        if os.path.exists(ALARMS_FILE):
+            with open(ALARMS_FILE, 'r') as f:
+                alarms = json.load(f)
+        
+        # Check if alarm already exists
+        exists = False
+        for alarm in alarms:
+            if alarm["time"] == alarm_time:
+                exists = True
+                break
+        
+        # Add new alarm if it doesn't exist
+        if not exists:
+            alarms.append({"time": alarm_time, "active": True})
+            with open(ALARMS_FILE, 'w') as f:
+                json.dump(alarms, f)
+                f.flush()
+                os.fsync(f.fileno())
+            
+            # Publish event
+            mqtt_client.publish(TOPIC_ALARM_ADDED, json.dumps({
+                "time": alarm_time,
+                "message": f"Alarm added for {alarm_time}"
+            }))
+            
+            # Also publish updated list
+            publish_alarms()
+            return True
+        else:
+            mqtt_client.publish(TOPIC_ALARM_ADDED, json.dumps({
+                "message": f"Alarm for {alarm_time} already exists"
+            }))
+            return False
+    except Exception as e:
+        print(f"Error adding alarm via MQTT: {e}")
+        mqtt_client.publish("alarm/error", json.dumps({
+            "message": f"Failed to add alarm: {str(e)}"
+        }))
+        return False
+
+def toggle_alarm_mqtt(index):
+    """Toggle alarm via MQTT request"""
+    try:
+        # Load alarms
+        if not os.path.exists(ALARMS_FILE):
+            mqtt_client.publish("alarm/error", json.dumps({
+                "message": "Alarm file does not exist"
+            }))
+            return False
+        
+        with open(ALARMS_FILE, 'r') as f:
+            alarms = json.load(f)
+        
+        if index < 0 or index >= len(alarms):
+            mqtt_client.publish("alarm/error", json.dumps({
+                "message": f"Invalid alarm index: {index}"
+            }))
+            return False
+        
+        # Toggle the alarm
+        alarms[index]["active"] = not alarms[index]["active"]
+        status = "activated" if alarms[index]["active"] else "deactivated"
+        message = f"Alarm at {alarms[index]['time']} {status}"
+        
+        # Save changes
+        with open(ALARMS_FILE, 'w') as f:
+            json.dump(alarms, f)
+            f.flush()
+            os.fsync(f.fileno())
+        
+        # Publish event
+        mqtt_client.publish(TOPIC_ALARM_TOGGLED, json.dumps({
+            "index": index,
+            "active": alarms[index]["active"],
+            "time": alarms[index]["time"],
+            "message": message
+        }))
+        
+        # Also publish updated list
+        publish_alarms()
+        return True
+    except Exception as e:
+        print(f"Error toggling alarm via MQTT: {e}")
+        mqtt_client.publish("alarm/error", json.dumps({
+            "message": f"Failed to toggle alarm: {str(e)}"
+        }))
+        return False
+
+def delete_alarm_mqtt(index):
+    """Delete alarm via MQTT request"""
+    try:
+        # Load alarms
+        if not os.path.exists(ALARMS_FILE):
+            mqtt_client.publish("alarm/error", json.dumps({
+                "message": "Alarm file does not exist"
+            }))
+            return False
+        
+        with open(ALARMS_FILE, 'r') as f:
+            alarms = json.load(f)
+        
+        if index < 0 or index >= len(alarms):
+            mqtt_client.publish("alarm/error", json.dumps({
+                "message": f"Invalid alarm index: {index}"
+            }))
+            return False
+        
+        # Store the time before deleting
+        deleted_time = alarms[index]["time"]
+        
+        # Delete the alarm
+        del alarms[index]
+        
+        # Save changes
+        with open(ALARMS_FILE, 'w') as f:
+            json.dump(alarms, f)
+            f.flush()
+            os.fsync(f.fileno())
+        
+        # Publish event
+        mqtt_client.publish(TOPIC_ALARM_DELETED, json.dumps({
+            "index": index,
+            "time": deleted_time,
+            "message": f"Deleted alarm at {deleted_time}"
+        }))
+        
+        # Also publish updated list
+        publish_alarms()
+        return True
+    except Exception as e:
+        print(f"Error deleting alarm via MQTT: {e}")
+        mqtt_client.publish("alarm/error", json.dumps({
+            "message": f"Failed to delete alarm: {str(e)}"
+        }))
+        return False
+
+def snooze_alarm_mqtt():
+    """Snooze the currently active alarm via MQTT"""
+    try:
+        from alarm_state import clear_state
+        clear_state()
+        mqtt_client.publish("alarm/state", json.dumps({
+            "alarm_active": False,
+            "timestamp": time.time(),
+            "message": "Alarm snoozed"
+        }))
+        return True
+    except Exception as e:
+        print(f"Error snoozing alarm via MQTT: {e}")
+        mqtt_client.publish("alarm/error", json.dumps({
+            "message": f"Failed to snooze alarm: {str(e)}"
+        }))
+        return False
+
+# Add a more robust publish function
+def safe_mqtt_publish(topic, payload, qos=1, retain=False):
+    """Safely publish a message to MQTT with error handling"""
+    try:
+        if isinstance(payload, (dict, list)):
+            payload = json.dumps(payload)
+        mqtt_client.publish(topic, payload, qos=qos, retain=retain)
+        return True
+    except Exception as e:
+        print(f"Error publishing to MQTT topic {topic}: {e}")
+        return False
+
+# Start a thread to periodically publish alarm state
+def publish_alarm_state_loop():
+    """Periodically publish alarm state to MQTT"""
+    try:
+        from alarm_state import get_state
+        state = get_state()
+        mqtt_client.publish("alarm/state", json.dumps(state))
+    except Exception as e:
+        print(f"Error publishing alarm state: {e}")
+    
+    # Schedule next update
+    threading.Timer(1.0, publish_alarm_state_loop).start()
+
+# Start the alarm state publishing thread when the app starts
 if __name__ == '__main__':
+    # Start publishing alarm state
+    threading.Timer(2.0, publish_alarm_state_loop).start()
+    
+    # Rest of your main code...
+
+if __name__ == '__main__':
+    # Check if running in virtual environment
+    import sys
+    import os
+    
+    in_venv = sys.prefix != sys.base_prefix
+    if not in_venv and not os.environ.get('SKIP_VENV_CHECK'):
+        print("Warning: Not running in a virtual environment.")
+        print("For best results, run this application using the run_alarm.sh script.")
+        print("If you want to bypass this check, set SKIP_VENV_CHECK=1 in your environment.")
+        print("Continuing anyway in 3 seconds...")
+        time.sleep(3)
+    
     # Get command-line argument for mode
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--gui', action='store_true', help='Launch GUI interface only')
     parser.add_argument('--web', action='store_true', help='Launch web interface only')
     parser.add_argument('--both', action='store_true', help='Launch both interfaces')
+    parser.add_argument('--mqtt-broker', default='localhost', help='MQTT broker host')
     args = parser.parse_args()
+    
+    # Update MQTT configuration from command line if provided
+    if args.mqtt_broker:
+        app.config['MQTT_BROKER_URL'] = args.mqtt_broker
     
     # Determine which mode to launch
     launch_gui = args.gui or args.both or not (args.gui or args.web or args.both)
     launch_web = args.web or args.both or not (args.gui or args.web or args.both)
     
     print(f"Starting in {'GUI' if launch_gui else ''}{' and ' if launch_gui and launch_web else ''}{'Web' if launch_web else ''} mode")
+    print(f"Using MQTT broker: {app.config['MQTT_BROKER_URL']}")
+    
+    # Start publishing alarm state
+    threading.Timer(2.0, publish_alarm_state_loop).start()
     
     # Launch the interfaces in the correct order
     if launch_gui:

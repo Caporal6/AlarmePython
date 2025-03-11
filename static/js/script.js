@@ -1,3 +1,6 @@
+// MQTT client
+let mqttClient = null;
+
 document.addEventListener('DOMContentLoaded', function() {
     // Elements
     const statusSpan = document.getElementById('status');
@@ -8,462 +11,448 @@ document.addEventListener('DOMContentLoaded', function() {
     const addAlarmBtn = document.getElementById('addAlarmBtn');
     const alarmList = document.getElementById('alarmList');
     
-    // Add these control buttons to the HTML if they don't exist
-    let startBtn, stopBtn;
-    if (!document.getElementById('startBtn')) {
-        const controlPanel = document.createElement('div');
-        controlPanel.className = 'control-panel';
-        
-        startBtn = document.createElement('button');
-        startBtn.id = 'startBtn';
-        startBtn.className = 'btn btn-primary';
-        startBtn.textContent = 'Start';
-        
-        stopBtn = document.createElement('button');
-        stopBtn.id = 'stopBtn';
-        stopBtn.className = 'btn btn-danger';
-        stopBtn.textContent = 'Stop';
-        stopBtn.disabled = true;
-        
-        controlPanel.appendChild(startBtn);
-        controlPanel.appendChild(stopBtn);
-        
-        // Insert after header
-        const header = document.querySelector('header');
-        header.parentNode.insertBefore(controlPanel, header.nextSibling);
-    } else {
-        startBtn = document.getElementById('startBtn');
-        stopBtn = document.getElementById('stopBtn');
-    }
-    
-    let outputPollInterval = null;
-    let alarmPollInterval = null;
-    let alarmStateInterval = null;
-    let statusPollInterval = null;
-    
     // Initialize time selectors
     initTimeSelectors();
     
-    // Load alarms on page load
-    loadAlarms();
+    // Try to connect to MQTT
+    initializeMQTT();
     
-    // Start the script
-    startBtn.addEventListener('click', function() {
-        fetch('/start', { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    startBtn.disabled = true;
-                    stopBtn.disabled = false;
-                    statusSpan.textContent = 'En cours d\'exécution';
-                    statusSpan.className = 'running';
-                    
-                    // Start polling for output
-                    if (!outputPollInterval) {
-                        outputPollInterval = setInterval(pollOutput, 500);
-                    }
-                    
-                    // Start polling for alarms
-                    if (!alarmPollInterval) {
-                        alarmPollInterval = setInterval(loadAlarms, 5000);
-                    }
-                } else {
-                    alert('Erreur: ' + data.message);
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Une erreur est survenue lors du démarrage du script');
-            });
-    });
-    
-    // Stop the script
-    stopBtn.addEventListener('click', function() {
-        fetch('/stop', { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    startBtn.disabled = false;
-                    stopBtn.disabled = true;
-                    statusSpan.textContent = 'Arrêté';
-                    statusSpan.className = '';
-                    
-                    // Stop polling
-                    if (outputPollInterval) {
-                        clearInterval(outputPollInterval);
-                        outputPollInterval = null;
-                    }
-                    
-                    if (alarmPollInterval) {
-                        clearInterval(alarmPollInterval);
-                        alarmPollInterval = null;
-                    }
-                } else {
-                    alert('Erreur: ' + data.message);
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Une erreur est survenue lors de l\'arrêt du script');
-            });
-    });
-    
-    // Add alarm
+    // Add alarm button handler
     addAlarmBtn.addEventListener('click', function() {
         const hour = hourSelect.value;
         const minute = minuteSelect.value;
         const second = secondSelect.value;
         
-        fetch('/alarm', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
+        if (mqttClient && mqttClient.isConnected()) {
+            console.log(`Adding alarm via MQTT: ${hour}:${minute}:${second}`);
+            mqttClient.publish('alarm/request/add', JSON.stringify({
                 hour: hour,
                 minute: minute,
                 second: second
+            }));
+            
+            appendOutput(`Requesting to add alarm at ${hour}:${minute}:${second}`);
+        } else {
+            console.log("MQTT client not connected, using HTTP fallback");
+            // Fallback to HTTP
+            fetch('/alarm', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    hour: hour,
+                    minute: minute,
+                    second: second
+                })
             })
-        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    appendOutput(`Alarm set for ${hour}:${minute}:${second}`);
+                    loadAlarms(); // Refresh alarm list
+                } else {
+                    appendOutput(`Error: ${data.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                appendOutput(`Error adding alarm: ${error.message}`);
+            });
+        }
+    });
+    
+    // Add refresh button functionality
+    const refreshAlarmsBtn = document.getElementById('refreshAlarmsBtn');
+    if (refreshAlarmsBtn) {
+        refreshAlarmsBtn.addEventListener('click', function() {
+            refreshAlarmsBtn.classList.add('refreshing');
+            
+            if (mqttClient && mqttClient.isConnected()) {
+                mqttClient.publish('alarm/request/list', '{}');
+                appendOutput("Requesting updated alarm list via MQTT");
+            } else {
+                loadAlarms(); // Use HTTP fallback
+                appendOutput("Requesting updated alarm list via HTTP");
+            }
+            
+            setTimeout(() => {
+                refreshAlarmsBtn.classList.remove('refreshing');
+            }, 1000);
+        });
+    }
+});
+
+function initializeMQTT() {
+    console.log("Initializing MQTT connection...");
+    appendOutput("Connecting to MQTT broker...");
+    
+    try {
+        // Create a client ID with a random suffix
+        const clientId = "web_client_" + Math.random().toString(16).substring(2, 10);
+        
+        // Get the current hostname for the broker (same as web server)
+        const hostname = window.location.hostname;
+        
+        // For WebSockets, we use port 9001
+        console.log(`Connecting to ${hostname}:9001 via WebSockets`);
+        
+        // Create the client instance
+        mqttClient = new Paho.MQTT.Client(hostname, 9001, clientId);
+        
+        // Set up the callbacks
+        mqttClient.onConnectionLost = function(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                console.log("Connection lost: " + responseObject.errorMessage);
+                appendOutput(`MQTT connection lost: ${responseObject.errorMessage}`);
+                statusSpan.textContent = "Disconnected";
+                statusSpan.className = "stopped";
+                
+                // Try to reconnect after a delay
+                setTimeout(function() {
+                    appendOutput("Attempting to reconnect...");
+                    initializeMQTT();
+                }, 5000);
+            }
+        };
+        
+        mqttClient.onMessageArrived = function(message) {
+            const topic = message.destinationName;
+            console.log(`Message received on topic ${topic}: ${message.payloadString}`);
+            
+            let payload;
+            try {
+                payload = JSON.parse(message.payloadString);
+            } catch (e) {
+                console.error("Failed to parse message as JSON:", e);
+                payload = message.payloadString;
+            }
+            
+            // Process different message types
+            switch(topic) {
+                case "alarm/list":
+                    console.log("Received alarm list:", payload);
+                    if (Array.isArray(payload)) {
+                        updateAlarmList(payload);
+                        appendOutput(`Updated alarm list: ${payload.length} alarms`);
+                    } else {
+                        console.error("Received invalid alarm list:", payload);
+                    }
+                    break;
+                    
+                case "alarm/added":
+                    appendOutput(payload.message || "Alarm added");
+                    // Request updated list
+                    mqttClient.publish("alarm/request/list", "{}");
+                    break;
+                    
+                case "alarm/deleted":
+                    appendOutput(payload.message || "Alarm deleted");
+                    // Request updated list
+                    mqttClient.publish("alarm/request/list", "{}");
+                    break;
+                    
+                case "alarm/toggled":
+                    appendOutput(payload.message || "Alarm toggled");
+                    // Request updated list
+                    mqttClient.publish("alarm/request/list", "{}");
+                    break;
+                    
+                case "alarm/state":
+                    handleAlarmState(payload);
+                    break;
+                    
+                case "alarm/output":
+                    appendOutput(typeof payload === "string" ? payload : payload.message || "Output received");
+                    break;
+                    
+                case "alarm/error":
+                    appendOutput(`Error: ${typeof payload === "string" ? payload : payload.message || "Unknown error"}`);
+                    break;
+                    
+                default:
+                    console.log(`Unhandled topic: ${topic}`, payload);
+            }
+        };
+        
+        // Connect
+        appendOutput(`Connecting to MQTT broker at ${hostname}:9001...`);
+        mqttClient.connect({
+            onSuccess: function() {
+                console.log("Connected to MQTT broker!");
+                appendOutput("Successfully connected to MQTT broker");
+                statusSpan.textContent = "Connected";
+                statusSpan.className = "running";
+                
+                // Subscribe to topics
+                mqttClient.subscribe("alarm/list");
+                mqttClient.subscribe("alarm/added");
+                mqttClient.subscribe("alarm/deleted");
+                mqttClient.subscribe("alarm/toggled");
+                mqttClient.subscribe("alarm/state");
+                mqttClient.subscribe("alarm/output");
+                mqttClient.subscribe("alarm/error");
+                
+                // Request current alarm list
+                mqttClient.publish("alarm/request/list", "{}");
+            },
+            onFailure: function(responseObject) {
+                console.error("Failed to connect to MQTT broker:", responseObject.errorMessage);
+                appendOutput(`Failed to connect to MQTT broker: ${responseObject.errorMessage}`);
+                statusSpan.textContent = "Disconnected";
+                statusSpan.className = "stopped";
+                
+                // Fall back to HTTP polling
+                startHttpPolling();
+            },
+            useSSL: window.location.protocol === 'https:',
+            timeout: 10  // 10 seconds
+        });
+        
+    } catch (error) {
+        console.error("Error setting up MQTT client:", error);
+        appendOutput(`Error setting up MQTT client: ${error.message}`);
+        
+        // Fall back to HTTP polling
+        startHttpPolling();
+    }
+}
+
+function startHttpPolling() {
+    console.log("Starting HTTP polling as fallback");
+    appendOutput("Starting HTTP polling as fallback");
+    
+    // Update alarm list every 5 seconds
+    setInterval(loadAlarms, 5000);
+    
+    // Check alarm state every second
+    setInterval(checkAlarmState, 1000);
+    
+    // Get output every 500ms
+    setInterval(pollOutput, 500);
+}
+
+// Load alarms via HTTP
+function loadAlarms() {
+    fetch('/alarms')
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                loadAlarms(); // Refresh alarm list
-                appendOutput(`Alarm set for ${hour}:${minute}:${second}`);
+                updateAlarmList(data.alarms);
             } else {
-                alert('Error: ' + data.message);
+                console.error("Error loading alarms:", data.message);
+                appendOutput(`Error loading alarms: ${data.message}`);
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            alert('An error occurred while setting the alarm');
+            console.error("Error loading alarms:", error);
+            appendOutput(`Error loading alarms: ${error.message}`);
         });
-    });
-    
-    // Delete alarm
-    function deleteAlarm(index) {
+}
+
+// Check alarm state via HTTP
+function checkAlarmState() {
+    fetch('/alarm_state')
+        .then(response => response.json())
+        .then(data => {
+            handleAlarmState(data);
+        })
+        .catch(error => {
+            console.error("Error checking alarm state:", error);
+        });
+}
+
+// Poll for script output via HTTP
+function pollOutput() {
+    fetch('/output')
+        .then(response => response.json())
+        .then(data => {
+            if (data.output && data.output.length > 0) {
+                data.output.forEach(line => {
+                    appendOutput(line);
+                });
+            }
+        })
+        .catch(error => {
+            console.error("Error polling output:", error);
+        });
+}
+
+// Handle alarm state changes
+function handleAlarmState(state) {
+    if (state.alarm_active) {
+        if (!alarmNotificationShown) {
+            showAlarmNotification(state.message || "Alarm activated");
+        }
+    } else {
+        if (alarmNotificationShown) {
+            hideAlarmNotification();
+        }
+    }
+}
+
+// Delete alarm
+function deleteAlarm(index) {
+    if (mqttClient && mqttClient.isConnected()) {
+        // Use MQTT
+        mqttClient.publish('alarm/request/delete', JSON.stringify({
+            index: index
+        }));
+        appendOutput(`Requesting to delete alarm at index ${index}`);
+    } else {
+        // Use HTTP fallback
         fetch(`/alarm/${index}`, {
             method: 'DELETE'
         })
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                loadAlarms(); // Refresh alarm list
-                appendOutput(data.output);
+                appendOutput(data.message || `Deleted alarm at index ${index}`);
+                loadAlarms();
             } else {
-                alert('Error: ' + data.message);
+                appendOutput(`Error: ${data.message}`);
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('An error occurred while deleting the alarm');
+            appendOutput(`Error deleting alarm: ${error.message}`);
         });
     }
-    
-    // Initialize time selectors
-    function initTimeSelectors() {
-        // Hours
-        for (let i = 0; i < 24; i++) {
-            const option = document.createElement('option');
-            option.value = i;
-            option.textContent = i.toString().padStart(2, '0');
-            hourSelect.appendChild(option);
-        }
-        
-        // Minutes
-        for (let i = 0; i < 60; i++) {
-            const option = document.createElement('option');
-            option.value = i;
-            option.textContent = i.toString().padStart(2, '0');
-            minuteSelect.appendChild(option);
-        }
-        
-        // Seconds
-        for (let i = 0; i < 60; i++) {
-            const option = document.createElement('option');
-            option.value = i;
-            option.textContent = i.toString().padStart(2, '0');
-            secondSelect.appendChild(option);
-        }
-    }
-    
-    // Load alarms
-    function loadAlarms() {
-        fetch('/alarms')
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    // Clear the current alarm list
-                    alarmList.innerHTML = '';
-                    
-                    // Add each alarm to the table
-                    data.alarms.forEach((alarm, index) => {
-                        const row = document.createElement('tr');
-                        
-                        // Time
-                        const timeCell = document.createElement('td');
-                        timeCell.textContent = alarm.time;
-                        row.appendChild(timeCell);
-                        
-                        // Status
-                        const statusCell = document.createElement('td');
-                        statusCell.textContent = alarm.active ? 'Active' : 'Inactive';
-                        statusCell.className = alarm.active ? 'status-active' : 'status-inactive';
-                        row.appendChild(statusCell);
-                        
-                        // Actions
-                        const actionsCell = document.createElement('td');
-                        
-                        // Toggle button
-                        const toggleBtn = document.createElement('button');
-                        toggleBtn.textContent = alarm.active ? '🔕' : '🔔';
-                        toggleBtn.title = alarm.active ? 'Disable' : 'Enable';
-                        toggleBtn.className = 'btn btn-sm ' + (alarm.active ? 'btn-success' : 'btn-secondary');
-                        toggleBtn.onclick = function() { toggleAlarm(index); };
-                        actionsCell.appendChild(toggleBtn);
-                        
-                        // Delete button
-                        const deleteBtn = document.createElement('button');
-                        deleteBtn.textContent = '🗑️';
-                        deleteBtn.title = 'Delete';
-                        deleteBtn.className = 'btn btn-danger btn-sm';
-                        deleteBtn.style.marginLeft = '5px';
-                        deleteBtn.onclick = function() { deleteAlarm(index); };
-                        actionsCell.appendChild(deleteBtn);
-                        
-                        row.appendChild(actionsCell);
-                        alarmList.appendChild(row);
-                    });
-                    
-                    // Update timestamps and hashes
-                    if (data.timestamp) {
-                        lastAlarmTimestamp = data.timestamp;
-                    }
-                    if (data.content_hash) {
-                        lastAlarmContentHash = data.content_hash;
-                    }
-                    
-                    console.log(`Updated alarm list: ${data.alarms.length} alarms found`);
-                } else {
-                    console.error('Error loading alarms:', data.message);
-                }
-            })
-            .catch(error => {
-                console.error('Error loading alarms:', error);
-            });
-    }
-    
-    // Poll for script output
-    function pollOutput() {
-        fetch('/output')
-            .then(response => response.json())
-            .then(data => {
-                // Update output display
-                if (data.output && data.output.length > 0) {
-                    data.output.forEach(line => {
-                        appendOutput(line);
-                    });
-                }
-                
-                // Update status if script has finished
-                if (data.status === 'finished') {
-                    startBtn.disabled = false;
-                    stopBtn.disabled = true;
-                    statusSpan.textContent = 'Terminé';
-                    statusSpan.className = '';
-                    
-                    // Stop polling
-                    if (outputPollInterval) {
-                        clearInterval(outputPollInterval);
-                        outputPollInterval = null;
-                    }
-                    
-                    if (alarmPollInterval) {
-                        clearInterval(alarmPollInterval);
-                        alarmPollInterval = null;
-                    }
-                }
-            })
-            .catch(error => {
-                console.error('Error polling output:', error);
-            });
-    }
-    
-    // Start all polling functions
-    startStatusPolling();
-    startAlarmFileWatcher();
-    startAlarmStatePolling();
-
-    // Add refresh button functionality
-    const refreshAlarmsBtn = document.getElementById('refreshAlarmsBtn');
-    if (refreshAlarmsBtn) {
-        refreshAlarmsBtn.addEventListener('click', function() {
-            refreshAlarmsBtn.classList.add('refreshing');
-            loadAlarms();
-            setTimeout(() => {
-                refreshAlarmsBtn.classList.remove('refreshing');
-            }, 1000);
-        });
-    }
-
-    // Also make sure the status is checked immediately at startup
-    checkApplicationStatus();
-});
-
-// Add these variables at the top of the file (outside any functions)
-let lastAlarmTimestamp = 0;
-let lastAlarmContentHash = 0;
-let alarmWatcherInterval = null;
-
-function startAlarmFileWatcher() {
-    // Check more frequently - every 1 second
-    alarmWatcherInterval = setInterval(checkAlarmsUpdated, 1000);
-    // Initial check to get the current timestamp
-    checkAlarmsUpdated();
 }
 
-function checkAlarmsUpdated() {
-    fetch('/check_alarms_updated')
+// Toggle alarm
+function toggleAlarm(index) {
+    // Visual feedback immediately
+    const row = document.querySelector(`#alarmList tr:nth-child(${index + 1})`);
+    if (row) {
+        row.classList.add('refreshing');
+    }
+    
+    if (mqttClient && mqttClient.isConnected()) {
+        // Use MQTT
+        mqttClient.publish('alarm/request/toggle', JSON.stringify({
+            index: index
+        }));
+        appendOutput(`Requesting to toggle alarm at index ${index}`);
+    } else {
+        // Use HTTP fallback
+        fetch(`/alarm/${index}/toggle`, {
+            method: 'POST'
+        })
         .then(response => response.json())
         .then(data => {
-            // Debug logging
-            console.log(`Checking alarms: last timestamp=${lastAlarmTimestamp}, current=${data.timestamp}`);
-            console.log(`Last content hash=${lastAlarmContentHash}, current=${data.content_hash}`);
-            
-            // Check if either the timestamp or content hash has changed
-            if (
-                (data.timestamp > 0 && data.timestamp != lastAlarmTimestamp) || 
-                (data.content_hash > 0 && data.content_hash != lastAlarmContentHash)
-            ) {
-                console.log('Alarms file has been modified, refreshing');
-                loadAlarms(); // Refresh the alarm list
+            if (data.status === 'success') {
+                appendOutput(data.message || `Toggled alarm at index ${index}`);
+                loadAlarms();
+            } else {
+                appendOutput(`Error: ${data.message}`);
             }
-            
-            // Always update both values
-            lastAlarmTimestamp = data.timestamp;
-            lastAlarmContentHash = data.content_hash;
         })
         .catch(error => {
-            console.error('Error checking alarms file:', error);
+            console.error('Error:', error);
+            appendOutput(`Error toggling alarm: ${error.message}`);
         });
-}
-
-// Add toggle alarm functionality
-function toggleAlarm(index) {
-    // First, find the button that was clicked
-    const buttons = document.querySelectorAll(`#alarmList tr:nth-child(${index + 1}) button`);
-    const toggleBtn = buttons[0]; // First button in the row is the toggle button
-    const statusCell = document.querySelector(`#alarmList tr:nth-child(${index + 1}) td:nth-child(2)`);
-    
-    // Immediately update UI to provide feedback (we'll revert if the server call fails)
-    const isCurrentlyActive = toggleBtn.textContent === '🔕';
-    
-    // Toggle the appearance
-    if (isCurrentlyActive) {
-        // Currently active, switching to inactive
-        toggleBtn.textContent = '🔔';
-        toggleBtn.title = 'Enable';
-        toggleBtn.className = 'btn btn-sm btn-secondary';
-        if (statusCell) {
-            statusCell.textContent = 'Inactive';
-            statusCell.className = 'status-inactive';
-        }
-    } else {
-        // Currently inactive, switching to active
-        toggleBtn.textContent = '🔕';
-        toggleBtn.title = 'Disable';
-        toggleBtn.className = 'btn btn-sm btn-success';
-        if (statusCell) {
-            statusCell.textContent = 'Active';
-            statusCell.className = 'status-active';
-        }
     }
     
-    // Add a "pending" visual indicator
-    toggleBtn.classList.add('refreshing');
-    
-    // Now make the actual server request
-    fetch(`/alarm/${index}/toggle`, {
-        method: 'POST'
-    })
-    .then(response => response.json())
-    .then(data => {
-        // Remove the pending indicator
-        toggleBtn.classList.remove('refreshing');
-        
-        if (data.status === 'success') {
-            // Server succeeded, append output message
-            appendOutput(data.message);
-            
-            // Also check the alarm state after toggling
-            checkAlarmState();
-        } else {
-            console.error('Error toggling alarm:', data.message);
-            appendOutput(`Warning: ${data.message}`);
-            // Revert the UI change since the server call failed
-            loadAlarms();
+    // Remove visual feedback after a delay
+    setTimeout(() => {
+        if (row) {
+            row.classList.remove('refreshing');
         }
-    })
-    .catch(error => {
-        // Remove the pending indicator
-        toggleBtn.classList.remove('refreshing');
+    }, 1000);
+}
+
+// Initialize time selectors
+function initTimeSelectors() {
+    const hourSelect = document.getElementById('hourSelect');
+    const minuteSelect = document.getElementById('minuteSelect');
+    const secondSelect = document.getElementById('secondSelect');
+    
+    if (!hourSelect || !minuteSelect || !secondSelect) return;
+    
+    // Clear existing options
+    hourSelect.innerHTML = '';
+    minuteSelect.innerHTML = '';
+    secondSelect.innerHTML = '';
+    
+    // Hours
+    for (let i = 0; i < 24; i++) {
+        const option = document.createElement('option');
+        option.value = i;
+        option.textContent = i.toString().padStart(2, '0');
+        hourSelect.appendChild(option);
+    }
+    
+    // Minutes and seconds
+    for (let i = 0; i < 60; i++) {
+        const minuteOption = document.createElement('option');
+        minuteOption.value = i;
+        minuteOption.textContent = i.toString().padStart(2, '0');
+        minuteSelect.appendChild(minuteOption);
         
-        console.error('Error:', error);
-        appendOutput('Error toggling alarm - see console for details');
-        // Revert the UI change since the network call failed
-        loadAlarms();
+        const secondOption = document.createElement('option');
+        secondOption.value = i;
+        secondOption.textContent = i.toString().padStart(2, '0');
+        secondSelect.appendChild(secondOption);
+    }
+}
+
+// Update the alarm list in the UI
+function updateAlarmList(alarms) {
+    const alarmList = document.getElementById('alarmList');
+    if (!alarmList) return;
+    
+    // Clear the current list
+    alarmList.innerHTML = '';
+    
+    // Add each alarm
+    alarms.forEach((alarm, index) => {
+        const row = document.createElement('tr');
+        
+        // Time column
+        const timeCell = document.createElement('td');
+        timeCell.textContent = alarm.time;
+        row.appendChild(timeCell);
+        
+        // Status column
+        const statusCell = document.createElement('td');
+        statusCell.textContent = alarm.active ? 'Active' : 'Inactive';
+        statusCell.className = alarm.active ? 'status-active' : 'status-inactive';
+        row.appendChild(statusCell);
+        
+        // Actions column
+        const actionsCell = document.createElement('td');
+        
+        // Toggle button
+        const toggleBtn = document.createElement('button');
+        toggleBtn.textContent = alarm.active ? '🔕' : '🔔';
+        toggleBtn.title = alarm.active ? 'Disable' : 'Enable';
+        toggleBtn.className = 'btn btn-sm ' + (alarm.active ? 'btn-success' : 'btn-secondary');
+        toggleBtn.onclick = function() { toggleAlarm(index); };
+        actionsCell.appendChild(toggleBtn);
+        
+        // Delete button
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = '🗑️';
+        deleteBtn.title = 'Delete';
+        deleteBtn.className = 'btn btn-danger btn-sm';
+        deleteBtn.style.marginLeft = '5px';
+        deleteBtn.onclick = function() { deleteAlarm(index); };
+        actionsCell.appendChild(deleteBtn);
+        
+        row.appendChild(actionsCell);
+        alarmList.appendChild(row);
     });
 }
 
-function startAlarmStatePolling() {
-    // Poll every second to check if an alarm is active
-    alarmStateInterval = setInterval(checkAlarmState, 1000);
-}
-
-function stopAlarmStatePolling() {
-    if (alarmStateInterval) {
-        clearInterval(alarmStateInterval);
-        alarmStateInterval = null;
-    }
-}
-
-function checkAlarmState() {
-    fetch('/alarm_state')
-        .then(response => response.json())
-        .then(data => {
-            if (data.alarm_active) {
-                if (!alarmNotificationShown) {
-                    showAlarmNotification(data.message);
-                }
-            } else {
-                // If the alarm is not active but notification is shown, hide it
-                if (alarmNotificationShown) {
-                    hideAlarmNotification();
-                }
-            }
-        })
-        .catch(error => {
-            console.error('Error checking alarm state:', error);
-        });
-}
-
-function hideAlarmNotification() {
-    const overlay = document.querySelector('.alarm-notification-overlay');
-    if (overlay) {
-        document.body.removeChild(overlay);
-    }
-    alarmNotificationShown = false;
-}
-
+// Show alarm notification
 let alarmNotificationShown = false;
 
 function showAlarmNotification(message) {
-    // Only show the notification once
     if (alarmNotificationShown) return;
     
     alarmNotificationShown = true;
     
-    // Create notification overlay
     const overlay = document.createElement('div');
     overlay.className = 'alarm-notification-overlay';
     overlay.style.position = 'fixed';
@@ -478,114 +467,74 @@ function showAlarmNotification(message) {
     overlay.style.alignItems = 'center';
     overlay.style.zIndex = '9999';
     
-    // Message
     const messageEl = document.createElement('h1');
     messageEl.textContent = '🔔 ALARM! 🔔';
     messageEl.style.color = 'white';
     messageEl.style.fontSize = '3rem';
     overlay.appendChild(messageEl);
     
-    // Details
     const detailsEl = document.createElement('p');
     detailsEl.textContent = message;
     detailsEl.style.color = 'white';
     detailsEl.style.fontSize = '1.5rem';
     overlay.appendChild(detailsEl);
     
-    // Snooze button
     const snoozeBtn = document.createElement('button');
     snoozeBtn.textContent = 'Snooze';
     snoozeBtn.className = 'btn btn-primary';
     snoozeBtn.style.marginTop = '20px';
     snoozeBtn.style.padding = '10px 20px';
     snoozeBtn.style.fontSize = '1.2rem';
-    snoozeBtn.onclick = function() {
-        // Send request to snooze the alarm
-        fetch('/snooze', { method: 'POST' })
-            .then(response => response.json())
-            .then(() => {
-                // Remove the overlay
-                document.body.removeChild(overlay);
-                alarmNotificationShown = false;
-                
-                // Also refresh alarm list to ensure UI is in sync
-                loadAlarms();
-            })
-            .catch(error => {
-                console.error('Error snoozing alarm:', error);
-            });
-    };
+    snoozeBtn.onclick = snoozeAlarm;
     overlay.appendChild(snoozeBtn);
     
     document.body.appendChild(overlay);
 }
 
-function startStatusPolling() {
-    // Check every 5 seconds
-    statusPollInterval = setInterval(checkApplicationStatus, 5000);
-    // Initial check
-    checkApplicationStatus();
+function hideAlarmNotification() {
+    const overlay = document.querySelector('.alarm-notification-overlay');
+    if (overlay) {
+        document.body.removeChild(overlay);
+    }
+    alarmNotificationShown = false;
 }
 
-function checkApplicationStatus() {
-    fetch('/status')
+// Snooze the alarm
+function snoozeAlarm() {
+    if (mqttClient && mqttClient.isConnected()) {
+        // Use MQTT
+        mqttClient.publish('alarm/request/snooze', '{}');
+        appendOutput('Requesting to snooze alarm via MQTT');
+    } else {
+        // Use HTTP fallback
+        fetch('/snooze', {
+            method: 'POST'
+        })
         .then(response => response.json())
         .then(data => {
-            // Update UI based on status
-            updateUIFromStatus(data);
+            if (data.status === 'success') {
+                appendOutput('Alarm snoozed');
+            } else {
+                appendOutput(`Error: ${data.message}`);
+            }
         })
         .catch(error => {
-            console.error('Error checking application status:', error);
+            console.error('Error:', error);
+            appendOutput(`Error snoozing alarm: ${error.message}`);
         });
-}
-
-function snoozeAlarm() {
-    fetch('/snooze', { method: 'POST' })
-        .then(response => response.json())
-        .then(() => {
-            // Remove the overlay
-            hideAlarmNotification();
-            
-            // Also refresh alarm list to ensure UI is in sync
-            loadAlarms();
-        })
-        .catch(error => {
-            console.error('Error snoozing alarm:', error);
-        });
-}
-
-function updateUIFromStatus(data) {
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const statusSpan = document.getElementById('status');
-    
-    if (data.script_running) {
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-        statusSpan.textContent = 'En cours d\'exécution';
-        statusSpan.className = 'running';
-        
-        // Start polling if not already
-        if (!outputPollInterval) {
-            outputPollInterval = setInterval(pollOutput, 500);
-        }
-        
-        // Start polling for alarms
-        if (!alarmPollInterval) {
-            alarmPollInterval = setInterval(loadAlarms, 5000);
-        }
-    } else {
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        statusSpan.textContent = 'Arrêté';
-        statusSpan.className = '';
     }
+    
+    // Hide the notification immediately for better UX
+    hideAlarmNotification();
 }
 
-// Move this to global scope or handle correctly in the code
+// Add to output log
 function appendOutput(text) {
     const outputElement = document.getElementById('output');
-    outputElement.textContent += text + '\n';
+    if (!outputElement) return;
+    
+    const timestamp = new Date().toLocaleTimeString();
+    outputElement.textContent += `[${timestamp}] ${text}\n`;
     
     // Auto-scroll to bottom
     const outputContainer = outputElement.parentElement;
