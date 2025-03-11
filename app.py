@@ -62,47 +62,71 @@ def handle_mqtt_message(client, userdata, message):
     
     print(f"Received message on topic {topic}: {payload}")
     
-    # Process different request types
-    if topic == "alarm/request/list":
-        # Client is requesting alarm list
-        publish_alarms()
-    elif topic == "alarm/request/add":
-        # Client is adding an alarm
-        try:
-            data = json.loads(payload)
-            hour = int(data.get('hour', 0))
-            minute = int(data.get('minute', 0))
-            second = int(data.get('second', 0))
-            add_alarm_mqtt(hour, minute, second)
-        except Exception as e:
-            print(f"Error processing add alarm request: {e}")
-            mqtt_client.publish("alarm/error", f"Failed to add alarm: {str(e)}")
-    elif topic == "alarm/request/delete":
-        # Client is deleting an alarm
-        try:
-            index = int(json.loads(payload).get('index', -1))
-            if index >= 0:
-                delete_alarm_mqtt(index)
-        except Exception as e:
-            print(f"Error processing delete alarm request: {e}")
-            mqtt_client.publish("alarm/error", f"Failed to delete alarm: {str(e)}")
-    elif topic == "alarm/request/toggle":
-        # Client is toggling an alarm
-        try:
-            index = int(json.loads(payload).get('index', -1))
-            if index >= 0:
-                toggle_alarm_mqtt(index)
-        except Exception as e:
-            print(f"Error processing toggle alarm request: {e}")
-            mqtt_client.publish("alarm/error", f"Failed to toggle alarm: {str(e)}")
-    elif topic == "alarm/request/snooze":
-        # Client is snoozing an alarm
-        try:
-            snooze_alarm_mqtt()
-        except Exception as e:
-            print(f"Error processing snooze request: {e}")
-            mqtt_client.publish("alarm/error", f"Failed to snooze alarm: {str(e)}")
-
+    try:
+        # Parse JSON payload
+        data = json.loads(payload)
+        
+        # Process different request types
+        if topic == "alarm/request/list":
+            # Client is requesting alarm list
+            publish_alarms()
+        elif topic == "alarm/request/add":
+            # Client is adding an alarm
+            try:
+                hour = int(data.get('hour', 0))
+                minute = int(data.get('minute', 0))
+                second = int(data.get('second', 0))
+                add_alarm_mqtt(hour, minute, second)
+            except Exception as e:
+                print(f"Error processing add alarm request: {e}")
+                mqtt_client.publish("alarm/error", f"Failed to add alarm: {str(e)}")
+        elif topic == "alarm/request/delete":
+            # Client is deleting an alarm
+            try:
+                index = int(data.get('index', -1))
+                if index >= 0:
+                    delete_alarm_mqtt(index)
+            except Exception as e:
+                print(f"Error processing delete alarm request: {e}")
+                mqtt_client.publish("alarm/error", f"Failed to delete alarm: {str(e)}")
+        elif topic == "alarm/request/toggle":
+            # Client is toggling an alarm
+            try:
+                index = int(data.get('index', -1))
+                if index >= 0:
+                    toggle_alarm_mqtt(index)
+            except Exception as e:
+                print(f"Error processing toggle alarm request: {e}")
+                mqtt_client.publish("alarm/error", f"Failed to toggle alarm: {str(e)}")
+        elif topic == "alarm/request/snooze":
+            # Client is snoozing an alarm
+            try:
+                snooze_alarm_mqtt()
+            except Exception as e:
+                print(f"Error processing snooze request: {e}")
+                mqtt_client.publish("alarm/error", f"Failed to snooze alarm: {str(e)}")
+        elif topic == "alarm/list" and isinstance(data, list):
+            # Got an alarm list from another client (likely the GUI)
+            # Update our local copy without republishing to avoid loops
+            try:
+                # Load current alarms for comparison
+                current_alarms = []
+                if os.path.exists(ALARMS_FILE):
+                    with open(ALARMS_FILE, 'r') as f:
+                        current_alarms = json.load(f)
+                
+                # Only update if different
+                if json.dumps(current_alarms, sort_keys=True) != json.dumps(data, sort_keys=True):
+                    with open(ALARMS_FILE, 'w') as f:
+                        json.dump(data, f)
+                    print(f"Updated alarms from MQTT message: {len(data)} alarms")
+            except Exception as e:
+                print(f"Error updating alarms from MQTT: {e}")
+                
+    except json.JSONDecodeError:
+        print(f"Received non-JSON payload: {payload}")
+    except Exception as e:
+        print(f"Error processing MQTT message: {e}")
 def read_output(process):
     """Read output from the process and store it in buffer"""
     global output_buffer
@@ -628,14 +652,15 @@ def add_alarm_mqtt(hour, minute, second):
                 f.flush()
                 os.fsync(f.fileno())
             
-            # Publish event
+            # Publish events
             mqtt_client.publish(TOPIC_ALARM_ADDED, json.dumps({
                 "time": alarm_time,
                 "message": f"Alarm added for {alarm_time}"
             }))
             
-            # Also publish updated list
-            publish_alarms()
+            # Also publish updated list with retain flag to keep it persistent
+            mqtt_client.publish(TOPIC_ALARMS, json.dumps(alarms), qos=1, retain=True)
+            
             return True
         else:
             mqtt_client.publish(TOPIC_ALARM_ADDED, json.dumps({
@@ -648,7 +673,7 @@ def add_alarm_mqtt(hour, minute, second):
             "message": f"Failed to add alarm: {str(e)}"
         }))
         return False
-
+    
 def toggle_alarm_mqtt(index):
     """Toggle alarm via MQTT request"""
     try:

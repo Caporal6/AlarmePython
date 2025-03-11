@@ -23,9 +23,9 @@ def setup_mqtt_client():
     try:
         import paho.mqtt.client as mqtt
         
-        # Create MQTT client
+        # Create MQTT client with a clean session
         client_id = f'alarm-gui-{os.getpid()}'
-        mqtt_client = mqtt.Client(client_id)
+        mqtt_client = mqtt.Client(client_id, clean_session=True)
         
         # Define callbacks
         def on_connect(client, userdata, flags, rc):
@@ -46,7 +46,9 @@ def setup_mqtt_client():
                 print(f"Error publishing alarm list on connect: {e}")
         
         def on_message(client, userdata, msg):
-            global alarms  # Move this to the beginning of the function
+            """Process incoming MQTT messages"""
+            global alarms  # Must be at the beginning of the function
+        
             try:
                 topic = msg.topic
                 payload_text = msg.payload.decode()
@@ -62,8 +64,28 @@ def setup_mqtt_client():
                     print(f"Received non-JSON MQTT message on {topic}: {payload_text}")
                     payload = {"message": payload_text}
                 
+                # Process messages differently based on topic
+                if topic == "alarm/list" and isinstance(payload, list):
+                    print(f"Received alarm list from MQTT with {len(payload)} alarms")
+                    # Only update if the received list is different
+                    current_list_json = json.dumps(sorted(alarms, key=lambda x: x["time"]), sort_keys=True)
+                    received_list_json = json.dumps(sorted(payload, key=lambda x: x["time"]), sort_keys=True)
+                    
+                    if current_list_json != received_list_json:
+                        print("Alarm list is different, updating")
+                        # Create a new list instead of modifying the existing one
+                        alarms = list(payload)
+                        
+                        # Save to disk first
+                        save_alarms()
+                        
+                        # Schedule UI update in main thread if in GUI mode
+                        if not WEB_MODE and root is not None:
+                            # Use root.after to schedule UI update on the main thread
+                            root.after(100, safe_ui_update)
+                
                 # Process commands from web interface
-                if topic == "alarm/request/add":
+                elif topic == "alarm/request/add":
                     try:
                         hour = int(payload.get('hour', 0))
                         minute = int(payload.get('minute', 0))
@@ -72,12 +94,9 @@ def setup_mqtt_client():
                         success = set_alarm(hour, minute, second)
                         if success:
                             print(f"Alarm added for {hour:02d}:{minute:02d}:{second:02d}")
-                            # Force refresh UI after receiving MQTT command
-                            if not WEB_MODE and 'styled_update_alarm_list' in globals():
-                                try:
-                                    globals()['styled_update_alarm_list']()
-                                except Exception as e:
-                                    print(f"Non-critical error updating UI: {e}")
+                            # Schedule UI update on main thread
+                            if not WEB_MODE and root is not None:
+                                root.after(100, safe_ui_update)
                         else:
                             print(f"Failed to add alarm for {hour:02d}:{minute:02d}:{second:02d}")
                     except Exception as e:
@@ -90,12 +109,9 @@ def setup_mqtt_client():
                         if index >= 0 and index < len(alarms):
                             success = delete_alarm(index)
                             print(f"Alarm at index {index} deleted: {success}")
-                            # Force refresh UI after receiving MQTT command
-                            if not WEB_MODE and 'styled_update_alarm_list' in globals():
-                                try:
-                                    globals()['styled_update_alarm_list']()
-                                except Exception as e:
-                                    print(f"Non-critical error updating UI: {e}")
+                            # Schedule UI update on main thread
+                            if not WEB_MODE and root is not None:
+                                root.after(100, safe_ui_update)
                         else:
                             print(f"Invalid alarm index: {index}")
                     except Exception as e:
@@ -108,12 +124,9 @@ def setup_mqtt_client():
                         if index >= 0 and index < len(alarms):
                             status = toggle_alarm(index)
                             print(f"Alarm at index {index} toggled: {status}")
-                            # Force refresh UI after receiving MQTT command
-                            if not WEB_MODE and 'styled_update_alarm_list' in globals():
-                                try:
-                                    globals()['styled_update_alarm_list']()
-                                except Exception as e:
-                                    print(f"Non-critical error updating UI: {e}")
+                            # Schedule UI update on main thread
+                            if not WEB_MODE and root is not None:
+                                root.after(100, safe_ui_update)
                         else:
                             print(f"Invalid alarm index: {index}")
                     except Exception as e:
@@ -130,41 +143,15 @@ def setup_mqtt_client():
                 elif topic == "alarm/request/list":
                     try:
                         # Publish current alarm list
-                        if mqtt_client:
+                        if mqtt_client and mqtt_client.is_connected():
                             mqtt_client.publish("alarm/list", json.dumps(alarms), qos=1)
                             print(f"Published {len(alarms)} alarms to MQTT")
                     except Exception as e:
                         print(f"Error handling list request: {e}")
                         
-                # Also handle direct changes to alarms from the web interface
-                elif topic == "alarm/list":
-                    try:
-                        if isinstance(payload, list):
-                            print(f"Received alarm list from MQTT with {len(payload)} alarms")
-                            # Update our local alarms if the source is not the same as this client
-                            # This prevents circular updates
-                            if msg.retain == 0:  # Only process non-retained messages to avoid loops
-                                # We're receiving a fresh list from the web interface
-                                print("Processing updated alarm list from MQTT")
-                                
-                                # Check if the alarm list is different from our current list
-                                if json.dumps(alarms) != json.dumps(payload):
-                                    # Update our local alarms
-                                    alarms = payload
-                                    # Save the updated list
-                                    save_alarms()
-                                    # Refresh UI
-                                    if not WEB_MODE and 'styled_update_alarm_list' in globals():
-                                        try:
-                                            globals()['styled_update_alarm_list']()
-                                        except Exception as e:
-                                            print(f"Non-critical error updating UI: {e}")
-                    except Exception as e:
-                        print(f"Error handling alarm list update: {e}")
-                        
             except Exception as e:
                 print(f"Error handling MQTT message: {e}")
-        
+
         def on_disconnect(client, userdata, rc):
             print(f"MQTT disconnected with result code {rc}")
             # Try to reconnect if it wasn't a clean disconnect
@@ -184,8 +171,7 @@ def setup_mqtt_client():
         mqtt_client.max_inflight_messages_set(20)
         mqtt_client.max_queued_messages_set(100)
         
-        # Connect to broker with clean_session=False for persistence
-        # Use a longer keepalive for stability (60 seconds)
+        # Connect to broker
         print("Connecting to MQTT broker...")
         mqtt_client.connect("localhost", 1883, 60)
         
@@ -397,9 +383,6 @@ def force_refresh_alarms():
     global alarms
     print("Forcing refresh of alarms from file...")
     
-    # Clear current alarms
-    alarms = []
-    
     # Force file sync to ensure we're reading latest version
     if hasattr(os, 'sync'):
         os.sync()
@@ -411,35 +394,28 @@ def force_refresh_alarms():
     
     # Now properly load alarms
     try:
-        if os.path.exists(ALARMS_FILE):
-            with open(ALARMS_FILE, 'r') as f:
-                loaded_alarms = json.load(f)
-                print(f"Loaded alarms content: {loaded_alarms}")
-                
-                # Validate the structure before replacing
-                valid_alarms = []
-                for alarm in loaded_alarms:
-                    if "time" not in alarm or "active" not in alarm:
-                        print(f"Warning: Invalid alarm format: {alarm}")
-                        continue
-                    valid_alarms.append(alarm)
-                
-                # Update the global alarms list
-                alarms = valid_alarms
-                print(f"Successfully loaded {len(alarms)} alarms from file")
-                
-                # Only update the display if we're in GUI mode AND the GUI has been initialized
-                # Check if we're in GUI mode and alarm_list_frame exists in globals()
-                if not WEB_MODE and 'alarm_list_frame' in globals() and 'alarm_canvas' in globals():
-                    try:
-                        # Use the global styled_update_alarm_list function
-                        globals()['styled_update_alarm_list']()
-                    except Exception as e:
-                        print(f"Error updating alarm list: {e}")
-                    
-                return True
-        else:
-            print(f"Alarms file {ALARMS_FILE} does not exist")
+        with open(ALARMS_FILE, 'r') as f:
+            loaded_alarms = json.load(f)
+            print(f"Loaded alarms content: {loaded_alarms}")
+            
+            # Validate the structure before replacing
+            valid_alarms = []
+            for alarm in loaded_alarms:
+                if "time" not in alarm or "active" not in alarm:
+                    print(f"Warning: Invalid alarm format: {alarm}")
+                    continue
+                valid_alarms.append(alarm)
+            
+            # Update the global alarms list
+            alarms = valid_alarms
+            print(f"Successfully loaded {len(alarms)} alarms from file")
+            
+            # Only update the display if we're in GUI mode
+            if not WEB_MODE and 'root' in globals() and root is not None:
+                # Schedule a safe UI update
+                root.after(100, safe_ui_update)
+            
+            return True
     except json.JSONDecodeError as e:
         print(f"JSON parsing error in alarms file: {e}")
         # Try to fix the file with a default empty list
@@ -473,6 +449,11 @@ def save_alarms():
         dir_fd = os.open(os.path.dirname(ALARMS_FILE) or '.', os.O_DIRECTORY)
         os.fsync(dir_fd)
         os.close(dir_fd)
+        
+        # Publish to MQTT after saving to file
+        if mqtt_client and mqtt_client.is_connected():
+            mqtt_client.publish("alarm/list", json.dumps(alarms), qos=1)
+            print(f"Published {len(alarms)} alarms to MQTT after save")
         
         print(f"Saved {len(alarms)} alarms to file")
     except Exception as e:
@@ -614,7 +595,8 @@ def set_alarm(hour, minute, second):
         publish_alarm_added(alarm_time, True)
         publish_alarm_list()
         if not WEB_MODE:
-            styled_update_alarm_list()
+            # Use the safe UI update function
+            root.after(100, safe_ui_update)
         return True
     else:
         print(f"Alarm for {alarm_time} already exists")
@@ -837,6 +819,126 @@ def styled_update_alarm_list():
     # Ajuste la zone de défilement
     alarm_canvas.update_idletasks()
 
+def safe_ui_update():
+    """Safely update UI elements from the main thread"""
+    try:
+        if WEB_MODE:
+            return
+            
+        # Check if critical elements exist before attempting update
+        if 'alarm_list_frame' not in globals() or 'alarm_canvas' not in globals():
+            print("UI elements not ready for update")
+            return
+            
+        # Check if root is still valid (not destroyed)
+        if not root or not root.winfo_exists():
+            print("Root window no longer exists")
+            return
+        
+        # Use local copy of alarms to avoid race conditions
+        local_alarms = list(alarms)
+        
+        # Now safely update the UI
+        print("Performing safe UI update")
+        
+        # Clear existing alarm list
+        for widget in alarm_list_frame.winfo_children():
+            widget.destroy()
+
+        # Check if alarms is empty
+        if not local_alarms:
+            # Show a message when no alarms are set
+            try:
+                no_alarms = tk.Label(alarm_list_frame, text="No alarms set", 
+                                  font=text_font, fg="#888888", bg=CARD_BG)
+                no_alarms.pack(pady=20)
+            except Exception as e:
+                print(f"Error showing empty alarms message: {e}")
+            return
+
+        # Create UI elements for each alarm
+        try:
+            for i, alarm in enumerate(local_alarms):
+                # Create a card-like frame for each alarm
+                card = tk.Frame(alarm_list_frame, bg=BG_COLOR, padx=5, pady=5)
+                card.pack(fill="x", pady=3, padx=3)
+                
+                # Top row with time and toggle
+                top_row = tk.Frame(card, bg=BG_COLOR)
+                top_row.pack(fill="x", expand=True)
+
+                # Display alarm time
+                label = tk.Label(top_row, text=alarm["time"], font=text_font, 
+                               fg=TEXT_COLOR, bg=BG_COLOR)
+                label.pack(side="left")
+
+                # Spacer to push toggle button to the right
+                tk.Frame(top_row, bg=BG_COLOR).pack(side="left", fill="x", expand=True)
+
+                # Toggle button with custom style
+                toggle_color = SUCCESS_COLOR if alarm["active"] else "#555555"
+                state_text = "ON" if alarm["active"] else "OFF"
+                state_btn = tk.Button(
+                    top_row, 
+                    text=state_text, 
+                    command=lambda i=i: toggle_alarm(i),
+                    font=button_font,
+                    bg=toggle_color,
+                    fg=TEXT_COLOR,
+                    width=6,
+                    relief=tk.FLAT,
+                    borderwidth=0
+                )
+                state_btn.pack(side="right", padx=5)
+
+                # Bottom row with edit and delete buttons
+                bottom_row = tk.Frame(card, bg=BG_COLOR)
+                bottom_row.pack(fill="x", pady=(10, 0))
+                
+                # Spacer to push buttons to the right
+                tk.Frame(bottom_row, bg=BG_COLOR).pack(side="left", fill="x", expand=True)
+
+                # Action buttons with better styling
+                edit_btn = tk.Button(
+                    bottom_row, 
+                    text="✏️ Edit", 
+                    command=lambda i=i: edit_alarm(i),
+                    font=button_font,
+                    bg=ACCENT_COLOR,
+                    fg=TEXT_COLOR,
+                    relief=tk.FLAT,
+                    borderwidth=0,
+                    padx=10
+                )
+                edit_btn.pack(side="left", padx=5)
+
+                # Delete button
+                delete_btn = tk.Button(
+                    bottom_row, 
+                    text="🗑️ Delete", 
+                    command=lambda i=i: delete_alarm(i),
+                    font=button_font,
+                    bg=DANGER_COLOR,
+                    fg=TEXT_COLOR,
+                    relief=tk.FLAT,
+                    borderwidth=0,
+                    padx=10
+                )
+                delete_btn.pack(side="left", padx=5)
+            
+            # Update the scroll region for the canvas
+            alarm_canvas.update_idletasks()
+            alarm_canvas.config(scrollregion=alarm_canvas.bbox("all"))
+            
+        except Exception as ui_error:
+            print(f"Error updating alarm UI: {ui_error}")
+            import traceback
+            traceback.print_exc()
+            
+    except Exception as e:
+        print(f"Error in safe_ui_update: {e}")
+        import traceback
+        traceback.print_exc()
 
 def force_refresh():
     """Force refresh alarms from file and update UI"""

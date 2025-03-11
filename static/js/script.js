@@ -1,5 +1,6 @@
 // MQTT client
 let mqttClient = null;
+let alarmNotificationShown = false;
 
 document.addEventListener('DOMContentLoaded', function() {
     // Elements
@@ -25,11 +26,16 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (mqttClient && mqttClient.isConnected()) {
             console.log(`Adding alarm via MQTT: ${hour}:${minute}:${second}`);
-            mqttClient.publish('alarm/request/add', JSON.stringify({
+            
+            // Create and send the MQTT message
+            const payload = JSON.stringify({
                 hour: hour,
                 minute: minute,
                 second: second
-            }));
+            });
+            const message = new Paho.MQTT.Message(payload);
+            message.destinationName = 'alarm/request/add';
+            mqttClient.send(message);
             
             appendOutput(`Requesting to add alarm at ${hour}:${minute}:${second}`);
         } else {
@@ -69,7 +75,11 @@ document.addEventListener('DOMContentLoaded', function() {
             refreshAlarmsBtn.classList.add('refreshing');
             
             if (mqttClient && mqttClient.isConnected()) {
-                mqttClient.publish('alarm/request/list', '{}');
+                // Create and send MQTT message
+                const message = new Paho.MQTT.Message('{}');
+                message.destinationName = 'alarm/request/list';
+                mqttClient.send(message);
+                
                 appendOutput("Requesting updated alarm list via MQTT");
             } else {
                 loadAlarms(); // Use HTTP fallback
@@ -105,8 +115,13 @@ function initializeMQTT() {
             if (responseObject.errorCode !== 0) {
                 console.log("Connection lost: " + responseObject.errorMessage);
                 appendOutput(`MQTT connection lost: ${responseObject.errorMessage}`);
-                statusSpan.textContent = "Disconnected";
-                statusSpan.className = "stopped";
+                
+                // Get status element safely
+                const statusSpan = document.getElementById('status');
+                if (statusSpan) {
+                    statusSpan.textContent = "Disconnected";
+                    statusSpan.className = "stopped";
+                }
                 
                 // Try to reconnect after a delay
                 setTimeout(function() {
@@ -143,19 +158,25 @@ function initializeMQTT() {
                 case "alarm/added":
                     appendOutput(payload.message || "Alarm added");
                     // Request updated list
-                    mqttClient.publish("alarm/request/list", "{}");
+                    const listRequestMsg = new Paho.MQTT.Message("{}");
+                    listRequestMsg.destinationName = "alarm/request/list";
+                    mqttClient.send(listRequestMsg);
                     break;
                     
                 case "alarm/deleted":
                     appendOutput(payload.message || "Alarm deleted");
                     // Request updated list
-                    mqttClient.publish("alarm/request/list", "{}");
+                    const deleteListMsg = new Paho.MQTT.Message("{}");
+                    deleteListMsg.destinationName = "alarm/request/list";
+                    mqttClient.send(deleteListMsg);
                     break;
                     
                 case "alarm/toggled":
                     appendOutput(payload.message || "Alarm toggled");
                     // Request updated list
-                    mqttClient.publish("alarm/request/list", "{}");
+                    const toggleListMsg = new Paho.MQTT.Message("{}");
+                    toggleListMsg.destinationName = "alarm/request/list";
+                    mqttClient.send(toggleListMsg);
                     break;
                     
                 case "alarm/state":
@@ -181,8 +202,13 @@ function initializeMQTT() {
             onSuccess: function() {
                 console.log("Connected to MQTT broker!");
                 appendOutput("Successfully connected to MQTT broker");
-                statusSpan.textContent = "Connected";
-                statusSpan.className = "running";
+                
+                // Get status element safely
+                const statusSpan = document.getElementById('status');
+                if (statusSpan) {
+                    statusSpan.textContent = "Connected";
+                    statusSpan.className = "running";
+                }
                 
                 // Subscribe to topics
                 mqttClient.subscribe("alarm/list");
@@ -194,13 +220,20 @@ function initializeMQTT() {
                 mqttClient.subscribe("alarm/error");
                 
                 // Request current alarm list
-                mqttClient.publish("alarm/request/list", "{}");
+                const listMsg = new Paho.MQTT.Message("{}");
+                listMsg.destinationName = "alarm/request/list";
+                mqttClient.send(listMsg);
             },
             onFailure: function(responseObject) {
                 console.error("Failed to connect to MQTT broker:", responseObject.errorMessage);
                 appendOutput(`Failed to connect to MQTT broker: ${responseObject.errorMessage}`);
-                statusSpan.textContent = "Disconnected";
-                statusSpan.className = "stopped";
+                
+                // Get status element safely
+                const statusSpan = document.getElementById('status');
+                if (statusSpan) {
+                    statusSpan.textContent = "Disconnected";
+                    statusSpan.className = "stopped";
+                }
                 
                 // Fall back to HTTP polling
                 startHttpPolling();
@@ -295,9 +328,13 @@ function handleAlarmState(state) {
 function deleteAlarm(index) {
     if (mqttClient && mqttClient.isConnected()) {
         // Use MQTT
-        mqttClient.publish('alarm/request/delete', JSON.stringify({
+        const payload = JSON.stringify({
             index: index
-        }));
+        });
+        const message = new Paho.MQTT.Message(payload);
+        message.destinationName = 'alarm/request/delete';
+        mqttClient.send(message);
+        
         appendOutput(`Requesting to delete alarm at index ${index}`);
     } else {
         // Use HTTP fallback
@@ -330,9 +367,13 @@ function toggleAlarm(index) {
     
     if (mqttClient && mqttClient.isConnected()) {
         // Use MQTT
-        mqttClient.publish('alarm/request/toggle', JSON.stringify({
+        const payload = JSON.stringify({
             index: index
-        }));
+        });
+        const message = new Paho.MQTT.Message(payload);
+        message.destinationName = 'alarm/request/toggle';
+        mqttClient.send(message);
+        
         appendOutput(`Requesting to toggle alarm at index ${index}`);
     } else {
         // Use HTTP fallback
@@ -446,8 +487,6 @@ function updateAlarmList(alarms) {
 }
 
 // Show alarm notification
-let alarmNotificationShown = false;
-
 function showAlarmNotification(message) {
     if (alarmNotificationShown) return;
     
@@ -503,7 +542,10 @@ function hideAlarmNotification() {
 function snoozeAlarm() {
     if (mqttClient && mqttClient.isConnected()) {
         // Use MQTT
-        mqttClient.publish('alarm/request/snooze', '{}');
+        const message = new Paho.MQTT.Message('{}');
+        message.destinationName = 'alarm/request/snooze';
+        mqttClient.send(message);
+        
         appendOutput('Requesting to snooze alarm via MQTT');
     } else {
         // Use HTTP fallback
