@@ -1,7 +1,5 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Elements
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
     const statusSpan = document.getElementById('status');
     const outputElement = document.getElementById('output');
     const hourSelect = document.getElementById('hourSelect');
@@ -9,6 +7,34 @@ document.addEventListener('DOMContentLoaded', function() {
     const secondSelect = document.getElementById('secondSelect');
     const addAlarmBtn = document.getElementById('addAlarmBtn');
     const alarmList = document.getElementById('alarmList');
+    
+    // Add these control buttons to the HTML if they don't exist
+    let startBtn, stopBtn;
+    if (!document.getElementById('startBtn')) {
+        const controlPanel = document.createElement('div');
+        controlPanel.className = 'control-panel';
+        
+        startBtn = document.createElement('button');
+        startBtn.id = 'startBtn';
+        startBtn.className = 'btn btn-primary';
+        startBtn.textContent = 'Start';
+        
+        stopBtn = document.createElement('button');
+        stopBtn.id = 'stopBtn';
+        stopBtn.className = 'btn btn-danger';
+        stopBtn.textContent = 'Stop';
+        stopBtn.disabled = true;
+        
+        controlPanel.appendChild(startBtn);
+        controlPanel.appendChild(stopBtn);
+        
+        // Insert after header
+        const header = document.querySelector('header');
+        header.parentNode.insertBefore(controlPanel, header.nextSibling);
+    } else {
+        startBtn = document.getElementById('startBtn');
+        stopBtn = document.getElementById('stopBtn');
+    }
     
     let outputPollInterval = null;
     let alarmPollInterval = null;
@@ -279,6 +305,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 1000);
         });
     }
+
+    // Also make sure the status is checked immediately at startup
+    checkApplicationStatus();
 });
 
 // Add these variables at the top of the file (outside any functions)

@@ -232,6 +232,10 @@ def add_alarm():
         minute = int(data.get('minute', 0))
         second = int(data.get('second', 0))
         
+        # Format the time properly with leading zeros
+        alarm_time = f"{hour:02d}:{minute:02d}:{second:02d}"
+        print(f"Attempting to add alarm for {alarm_time}")
+        
         # Execute a Python script to add the alarm
         result = subprocess.run(
             [sys.executable, '-c', f'''
@@ -255,13 +259,21 @@ if not exists:
     alarms.append({{"time": alarm_time, "active": True}})
     with open(alarms_file, 'w') as f:
         json.dump(alarms, f)
+        f.flush()
+        os.fsync(f.fileno())
     print("Alarm added")
 else:
     print("Alarm already exists")
+
+# Ensure file is properly flushed to disk
+os.sync()
 '''],
             capture_output=True,
             text=True
         )
+        
+        print(f"Command output: {result.stdout.strip()}")
+        print(f"Command error: {result.stderr.strip()}" if result.stderr else "No errors")
         
         return jsonify({
             "status": "success",
@@ -269,6 +281,9 @@ else:
             "output": result.stdout.strip()
         })
     except Exception as e:
+        print(f"Error adding alarm: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/alarm/<int:index>', methods=['DELETE'])
