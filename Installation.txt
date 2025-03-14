@@ -1,2 +1,58 @@
+# Installation Steps for AlarmePython
+
+## Basic System Requirements
+- Python 3.7 or higher
+- Required packages will be installed in a virtual environment
+
+## Setup Instructions
+
+1. Clone or download the project to your desired location:
+   git clone https://github.com/yourusername/AlarmePython.git
+   cd AlarmePython
+
+2. Make the setup script executable and run it:
+   chmod +x setup_venv.sh
+   ./setup_venv.sh
+
+3. Make the run script executable:
+   chmod +x run_alarm.sh
+
+4. To run the application:
+   ./run_alarm.sh
+
+   Optional command line arguments:
+   --gui     : Run GUI interface only
+   --web     : Run web interface only
+   --both    : Run both GUI and web interfaces
+   --mqtt-broker [HOST] : Specify MQTT broker hostname/IP
+
+## Installing as a System Service
+
+1. Copy the service file to systemd directory:
+   sudo cp alarm-system.service /etc/systemd/system/
+
+2. Enable and start the service:
+   sudo systemctl enable alarm-system
+   sudo systemctl start alarm-system
+
+3. Check service status:
+   sudo systemctl status alarm-system
+
+## Installing Mosquitto MQTT Broker (if needed)
+
+sudo apt-get install -y mosquitto mosquitto-clients
+
+# Configure Mosquitto to accept WebSocket connections
+sudo bash -c 'cat > /etc/mosquitto/conf.d/websockets.conf << EOL
+listener 1883
+allow_anonymous true
+
+listener 9001
+protocol websockets
+allow_anonymous true
+EOL'
+
+sudo systemctl restart mosquitto
+
 sudo apt-get install python3-tk
 pip install playsound

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Alarm Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- Add the MQTT library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" type="text/javascript"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Alarm Controller</h1>
+        </header>
+        
+        <div class="status-panel">
+            <p>Status: <span id="status" class="running">En cours d'exécution</span></p>
+        </div>
+        
+        <div class="alarm-panel">
+            <h2>Configurer une alarme</h2>
+            <div class="time-selector">
+                <select id="hourSelect"></select>
+                <span>:</span>
+                <select id="minuteSelect"></select>
+                <span>:</span>
+                <select id="secondSelect"></select>
+                <button id="addAlarmBtn" class="btn btn-primary">Ajouter</button>
+            </div>
+            
+            <div class="alarm-list">
+                <div class="alarm-header">
+                    <h3>Alarmes configurées</h3>
+                    <button id="refreshAlarmsBtn" class="btn btn-sm btn-primary" title="Refresh alarm list">
+                        🔄
+                    </button>
+                </div>
+                <table id="alarmTable">
+                    <thead>
+                        <tr>
+                            <th>Heure</th>
+                            <th>Statut</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alarmList">
+                        <!-- Alarms will appear here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Add this section to your index.html after the alarm list section -->
+        <div id="sensorPanel">
+            <h3>Sensor Information</h3>
+            <div class="sensor-row">
+                <span class="sensor-label">Temperature:</span>
+                <span id="temperature" class="sensor-value">--°C</span>
+            </div>
+            <div class="sensor-row">
+                <span class="sensor-label">Humidity:</span>
+                <span id="humidity" class="sensor-value">--%</span>
+            </div>
+            <div class="sensor-row">
+                <span class="sensor-label">Movement:</span>
+                <span id="movement" class="sensor-value">Unknown</span>
+            </div>
+            <div id="distanceContainer">
+                <div class="sensor-row">
+                    <span class="sensor-label">Current Distance:</span>
+                    <span id="distance" class="sensor-value">-- cm</span>
+                </div>
+                <div id="distanceStatus">Place at correct distance to snooze</div>
+            </div>
+        </div>
+
+        <!-- Add this section to your index.html after the sensor panel -->
+        <div id="hardwareTestPanel">
+            <h3>Hardware Test</h3>
+            <div class="test-controls">
+                <button id="testLED" class="btn btn-primary">Test LED</button>
+                <button id="testServo" class="btn btn-primary">Test Servo</button>
+                <button id="testBuzzer" class="btn btn-primary">Test Buzzer</button>
+            </div>
+            <div id="testResult" class="mt-2"></div>
+        </div>
+
+        <div class="output-panel">
+            <h2>Sortie du programme</h2>
+            <div class="output-container">
+                <pre id="output"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

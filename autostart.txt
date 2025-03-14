@@ -1,0 +1,17 @@
+sudo apt-get update
+sudo apt-get install -y python3-flask python3-tk x11-xserver-utils unclutter
+
+mkdir -p ~/.config/lxsession/LXDE-pi/
+nano ~/.config/lxsession/LXDE-pi/autostart
+
+@lxpanel --profile LXDE-pi
+@pcmanfm --desktop --profile LXDE-pi
+@xscreensaver -no-splash
+@xset s off
+@xset -dpms
+@xset s noblank
+@unclutter -idle 0.1
+
+sudo apt-get install unclutter
+if not WEB_MODE:
+    root.attributes('-fullscreen', True)  # This makes Tkinter window fullscreen

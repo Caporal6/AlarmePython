@@ -1,0 +1,4 @@
+flask>=2.0.1
+Flask-MQTT>=1.1.1
+paho-mqtt>=1.5.1
+watchdog>=2.1.3
