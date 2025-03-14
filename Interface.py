@@ -190,7 +190,7 @@ def check_movement():
 
     accel = mpu.get_acceleration()  # récupérer les données de l'accéléromètre
     gyro = mpu.get_rotation()  # récupérer les données du gyroscope
-    print(f"Accélération: {accel} Gyroscope: {gyro}")
+    #print(f"Accélération: {accel} Gyroscope: {gyro}")
 
     # Calculer la variation de l'accélération et de la rotation par rapport aux dernières valeurs
     accel_variation = calculate_variation(accel, last_accel)
