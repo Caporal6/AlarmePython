@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Hardware Test Interface</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #121212;
+            color: #FFFFFF;
+        }
+        
+        h1, h2 {
+            color: #BB86FC;
+        }
+        
+        .panel {
+            background-color: #1E1E1E;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .component-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #333;
+        }
+        
+        .component-name {
+            width: 150px;
+            font-weight: bold;
+        }
+        
+        .component-controls {
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            padding: 8px 15px;
+            background-color: #BB86FC;
+            color: #121212;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        button:hover {
+            background-color: #9965CC;
+        }
+        
+        .status-box {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #272727;
+            border-radius: 4px;
+            min-height: 40px;
+        }
+        
+        .success {
+            color: #03DAC6;
+        }
+        
+        .error {
+            color: #CF6679;
+        }
+        
+        .nav-links {
+            margin: 20px 0;
+        }
+        
+        .nav-links a {
+            color: #BB86FC;
+            margin-right: 15px;
+            text-decoration: none;
+        }
+        
+        .nav-links a:hover {
+            text-decoration: underline;
+        }
+        
+        #sensorData {
+            margin-top: 10px;
+        }
+        
+        .sensor-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+        }
+        
+        .sensor-label {
+            font-weight: bold;
+        }
+        
+        .sensor-value {
+            color: #03DAC6;
+        }
+    </style>
+</head>
+<body>
+    <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/mqtt_test">MQTT Test</a>
+    </div>
+
+    <h1>Hardware Test Interface</h1>
+    
+    <div class="panel">
+        <h2>Component Control</h2>
+        
+        <div class="component-row">
+            <div class="component-name">LED</div>
+            <div class="component-controls">
+                <button onclick="testComponent('led', 'on')">Turn On</button>
+                <button onclick="testComponent('led', 'off')">Turn Off</button>
+            </div>
+        </div>
+        
+        <div class="component-row">
+            <div class="component-name">Servo</div>
+            <div class="component-controls">
+                <button onclick="testComponent('servo', 'sweep')">Sweep</button>
+                <button onclick="testComponent('servo', 'center')">Center</button>
+            </div>
+        </div>
+        
+        <div class="component-row">
+            <div class="component-name">Buzzer</div>
+            <div class="component-controls">
+                <button onclick="testComponent('buzzer', 'on')">Beep</button>
+                <button onclick="testComponent('buzzer', 'off')">Stop</button>
+            </div>
+        </div>
+        
+        <div class="status-box" id="testResult">
+            Test results will appear here...
+        </div>
+    </div>
+    
+    <div class="panel">
+        <h2>Sensor Readings</h2>
+        <button onclick="refreshSensorData()">Refresh Sensor Data</button>
+        
+        <div id="sensorData">
+            <div class="sensor-row">
+                <span class="sensor-label">Hardware Available:</span>
+                <span class="sensor-value" id="hardware-status">Unknown</span>
+            </div>
+            <div class="sensor-row">
+                <span class="sensor-label">Temperature:</span>
+                <span class="sensor-value" id="temperature">--°C</span>
+            </div>
+            <div class="sensor-row">
+                <span class="sensor-label">Humidity:</span>
+                <span class="sensor-value" id="humidity">--%</span>
+            </div>
+            <div class="sensor-row">
+                <span class="sensor-label">Distance:</span>
+                <span class="sensor-value" id="distance">-- cm</span>
+            </div>
+            <div class="sensor-row">
+                <span class="sensor-label">Movement:</span>
+                <span class="sensor-value" id="movement">Unknown</span>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function testComponent(component, action) {
+            const resultElement = document.getElementById('testResult');
+            resultElement.textContent = `Testing ${component} (${action})...`;
+            resultElement.className = '';
+            
+            fetch('/test_hardware', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    component: component,
+                    action: action
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    resultElement.textContent = data.message;
+                    resultElement.className = 'success';
+                } else {
+                    resultElement.textContent = data.message;
+                    resultElement.className = 'error';
+                }
+            })
+            .catch(error => {
+                resultElement.textContent = `Error: ${error.message}`;
+                resultElement.className = 'error';
+            });
+        }
+        
+        function refreshSensorData() {
+            fetch('/sensor_data')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('hardware-status').textContent = 
+                        data.hardware_available ? "Available" : "Not Available";
+                        
+                    if (data.hardware_available) {
+                        if ('temperature' in data) {
+                            document.getElementById('temperature').textContent = 
+                                `${data.temperature.toFixed(1)}°C`;
+                        }
+                        
+                        if ('humidity' in data) {
+                            document.getElementById('humidity').textContent = 
+                                `${data.humidity.toFixed(1)}%`;
+                        }
+                        
+                        if ('distance' in data) {
+                            document.getElementById('distance').textContent = 
+                                `${data.distance.toFixed(1)} cm`;
+                        }
+                        
+                        if ('movement_detected' in data) {
+                            document.getElementById('movement').textContent = 
+                                data.movement_detected ? "Movement Detected" : "No Movement";
+                        }
+                    } else {
+                        document.getElementById('temperature').textContent = "Hardware unavailable";
+                        document.getElementById('humidity').textContent = "Hardware unavailable";
+                        document.getElementById('distance').textContent = "Hardware unavailable";
+                        document.getElementById('movement').textContent = "Hardware unavailable";
+                    }
+                })
+                .catch(error => {
+                    console.error("Error fetching sensor data:", error);
+                });
+        }
+        
+        // Refresh sensor data when page loads
+        refreshSensorData();
+        
+        // Auto refresh every 5 seconds
+        setInterval(refreshSensorData, 5000);
+    </script>
+</body>
+</html>

@@ -813,7 +813,22 @@ def publish_alarm_state_loop():
     # Schedule next update
     threading.Timer(1.0, publish_alarm_state_loop).start()
 
+    
+
+    
+
 # Start the alarm state publishing thread when the app starts
+
+@app.route('/websocket_test')
+def websocket_test():
+    """Test page for WebSocket connections"""
+    return render_template('test.html')
+
+@app.route('/hardware_test_page')
+def hardware_test_page():
+    """Dedicated page for testing hardware components"""
+    return render_template('hardware_test.html')
+
 if __name__ == '__main__':
     # Start publishing alarm state
     threading.Timer(2.0, publish_alarm_state_loop).start()
