@@ -959,7 +959,13 @@ def test_hardware():
                             time.sleep(0.01)
                     
                     threading.Thread(target=move_servo_test).start()
-                    return jsonify({"status": "success", "message": "Servo moving"})
+                    return jsonify({"status": "success", "message": "Servo moving back and forth"})
+                    
+                elif action == 'center':
+                    # Move servo to center position (90 degrees)
+                    servo.angle = 90
+                    return jsonify({"status": "success", "message": "Servo centered at 90°"})
+                    
             except Exception as e:
                 return jsonify({"status": "error", "message": f"Servo control failed: {str(e)}"})
         
@@ -981,3 +987,13 @@ def test_hardware():
         return jsonify({"status": "error", "message": "Invalid component or action"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/websocket_test')
+def websocket_test():
+    """Test page for WebSocket connections"""
+    return render_template('test.html')
+
+@app.route('/hardware_test_page')
+def hardware_test_page():
+    """Dedicated page for testing hardware components"""
+    return render_template('hardware_test.html')

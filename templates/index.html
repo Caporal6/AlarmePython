@@ -5,12 +5,43 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <!-- Add the MQTT library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" type="text/javascript"></script>
+    <style>
+        .diagnostics-links {
+            background-color: #1E1E1E;
+            border-radius: 8px;
+            padding: 10px 15px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .diagnostics-links a {
+            display: inline-block;
+            margin: 5px 10px;
+            padding: 8px 15px;
+            background-color: #BB86FC;
+            color: #121212;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        
+        .diagnostics-links a:hover {
+            background-color: #9965CC;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>Alarm Controller</h1>
         </header>
+        
+        <div class="diagnostics-links">
+            <a href="{{ url_for('mqtt_test') }}">MQTT WebSocket Test</a>
+            <a href="{{ url_for('websocket_test') }}">WebSocket Diagnostics</a>
+            <a href="{{ url_for('hardware_test_page') }}">Hardware Test Interface</a>
+        </div>
         
         <div class="status-panel">
             <p>Status: <span id="status" class="running">En cours d'exécution</span></p>
