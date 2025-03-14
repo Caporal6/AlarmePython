@@ -178,7 +178,7 @@
             resultElement.textContent = `Testing ${component} (${action})...`;
             resultElement.className = '';
             
-            fetch('/test_hardware', {
+            fetch('/test_hardware_fixed', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -188,7 +188,13 @@
                     action: action
                 })
             })
-            .then(response => response.json())
+            .then(response => {
+                // First check if the response is OK before parsing JSON
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 if (data.status === 'success') {
                     resultElement.textContent = data.message;
@@ -201,6 +207,7 @@
             .catch(error => {
                 resultElement.textContent = `Error: ${error.message}`;
                 resultElement.className = 'error';
+                console.error("Hardware test error:", error);
             });
         }
         

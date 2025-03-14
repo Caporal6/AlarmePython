@@ -686,10 +686,12 @@ function updateSensorData() {
 // Function to test hardware components
 function testHardware(component, action) {
     const resultElement = document.getElementById('testResult');
-    resultElement.textContent = `Testing ${component}...`;
-    resultElement.className = '';
+    if (resultElement) {
+        resultElement.textContent = `Testing ${component}...`;
+        resultElement.className = '';
+    }
     
-    fetch('/test_hardware', {
+    fetch('/test_hardware_fixed', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -699,8 +701,16 @@ function testHardware(component, action) {
             action: action
         })
     })
-    .then(response => response.json())
+    .then(response => {
+        // First check if the response is OK
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+    })
     .then(data => {
+        if (!resultElement) return;
+        
         if (data.status === 'success') {
             resultElement.textContent = data.message;
             resultElement.className = 'text-success';
@@ -710,7 +720,10 @@ function testHardware(component, action) {
         }
     })
     .catch(error => {
+        if (!resultElement) return;
+        
         resultElement.textContent = `Error: ${error.message}`;
         resultElement.className = 'text-danger';
+        console.error("Hardware test error:", error);
     });
 }

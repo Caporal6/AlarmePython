@@ -4,9 +4,16 @@ import os
 import sys
 import json
 import threading
+import traceback
 from pathlib import Path
 import random
 import math
+
+# Try to import MQTT
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    print("paho-mqtt not installed, MQTT functionality will be limited")
 
 try:
     # Hardware-specific imports, use try/except to make it work in web mode too
@@ -88,10 +95,11 @@ def calculate_variation(new_values, last_values):
 
 # Function to check movement from accelerometer
 def check_movement():
+    """Check for movement using accelerometer."""
     global last_accel, last_gyro
     
     if not HARDWARE_AVAILABLE:
-        # Return random movement for testing in web mode
+        # For testing in web mode, generate random movement
         import random
         return random.choice([True, False])
     
@@ -115,17 +123,20 @@ def check_movement():
         if any(variation > excessive_movement_threshold for variation in accel_variation) or \
            any(variation > excessive_rotation_threshold for variation in gyro_variation):
             if 'movement_warning_label' in globals() and movement_warning_label and not WEB_MODE:
-                movement_warning_label.config(text="Mouvement excessif détecté!")
-            return False
+                movement_warning_label.config(text="Movement detected!")
+            return False  # Returns False when movement is detected (for historical reasons)
         
         # Check for regular movement
         elif accel_magnitude > movement_threshold or gyro_magnitude > movement_threshold:
-            return True
+            return False  # Returns False when movement is detected
             
-        return False
+        # No movement detected
+        if 'movement_warning_label' in globals() and movement_warning_label and not WEB_MODE:
+            movement_warning_label.config(text="No movement")
+        return True  # Returns True when NO movement is detected
     except Exception as e:
         print(f"Error in check_movement: {e}")
-        return False
+        return True  # Default to "no movement" on error
 
 # Function to check distance and handle alarm snooze
 def check_distance():
@@ -199,24 +210,32 @@ def move_servo():
 
 # Function to update temperature and humidity
 def update_weather():
+    """Update temperature and humidity display every minute."""
     if not HARDWARE_AVAILABLE or WEB_MODE:
         return
     
     try:
         dht = DHT.DHT(DHTPin)
-        chk = dht.readDHT11()
-        if chk == 0:
-            humidity = dht.getHumidity()
-            temperature = dht.getTemperature()
-            
-            if 'left_label1' in globals() and 'left_label2' in globals():
-                left_label1.config(text=f"Humidité: {humidity:.2f}%")
-                left_label2.config(text=f"Température: {temperature:.2f}°C")
+        # Try multiple times to get a valid reading
+        for i in range(5):  # Try up to 5 times
+            chk = dht.readDHT11()
+            if chk == 0:
+                humidity = dht.getHumidity()
+                temperature = dht.getTemperature()
+                
+                if 'left_label1' in globals() and 'left_label2' in globals():
+                    left_label1.config(text=f"Humidity: {humidity:.1f}%")
+                    left_label2.config(text=f"Temperature: {temperature:.1f}°C")
+                    print(f"Updated weather: {temperature:.1f}°C, {humidity:.1f}%")
+                break
+            time.sleep(0.1)  # Short delay between attempts
     except Exception as e:
         print(f"Error updating weather: {e}")
         
+    # Schedule the next update
     if not WEB_MODE and 'root' in globals():
         root.after(60000, update_weather)  # Update every minute
+
 
 print("Interface 1.py starting...")
 
@@ -1594,16 +1613,17 @@ def run_gui_mode():
     
     # Add sensor information section if hardware is available
     if HARDWARE_AVAILABLE:
-        # Create sensor frame
-        sensor_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=10)
-        sensor_frame.pack(fill="x", pady=5)
+        # Create sensor frame with more prominent styling
+        sensor_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=10,
+                              highlightbackground=ACCENT_COLOR, highlightthickness=1)
+        sensor_frame.pack(fill="x", pady=10)
         
         # Title for sensor section
         sensor_title = tk.Label(sensor_frame, text="Sensor Information", font=subtitle_font,
                                fg=ACCENT_COLOR, bg=CARD_BG)
         sensor_title.pack(pady=(0, 5))
         
-        # Create temperature and humidity labels
+        # Create temperature and humidity labels with initial values
         left_label1 = tk.Label(sensor_frame, text="Humidity: ---%", font=text_font,
                              fg=TEXT_COLOR, bg=CARD_BG)
         left_label1.pack(pady=2, anchor="w")
@@ -1612,7 +1632,7 @@ def run_gui_mode():
                              fg=TEXT_COLOR, bg=CARD_BG)
         left_label2.pack(pady=2, anchor="w")
         
-        # Create distance label
+        # Create distance label with more info
         distance_label = tk.Label(sensor_frame, text="Distance: ---", font=text_font,
                                 fg=TEXT_COLOR, bg=CARD_BG)
         distance_label.pack(pady=2, anchor="w")
@@ -1621,10 +1641,17 @@ def run_gui_mode():
         movement_warning_label = tk.Label(sensor_frame, text="", font=text_font,
                                         fg=DANGER_COLOR, bg=CARD_BG)
         movement_warning_label.pack(pady=2, anchor="w")
-    
-    # Start weather and sensor updates if hardware is available
-    if HARDWARE_AVAILABLE:
+        
+        # Start sensor updates immediately
         update_weather()
+        
+        # Also check acceleration immediately
+        if check_movement():
+            movement_warning_label.config(text="No movement detected")
+        else:
+            movement_warning_label.config(text="Movement detected!")
+        
+        update_distance_display()  # Start regular distance updates
 
     # Now start the main event loop with proper error handling
     print("Starting main event loop...")
@@ -1683,10 +1710,14 @@ def get_sensor_data():
         # Get temperature and humidity if available
         try:
             dht = DHT.DHT(DHTPin)
-            chk = dht.readDHT11()
-            if chk == 0:
-                data["temperature"] = dht.getTemperature()
-                data["humidity"] = dht.getHumidity()
+            # Try multiple times to get a valid reading
+            for i in range(3):  # Try up to 3 times
+                chk = dht.readDHT11()
+                if chk == 0:
+                    data["temperature"] = dht.getTemperature()
+                    data["humidity"] = dht.getHumidity()
+                    break
+                time.sleep(0.1)  # Short delay between attempts
         except Exception as e:
             print(f"Error reading temperature/humidity: {e}")
         
@@ -1696,9 +1727,9 @@ def get_sensor_data():
         except Exception as e:
             print(f"Error reading distance: {e}")
         
-        # Get movement status
+        # Get movement status (invert check_movement result for consistency)
         try:
-            data["movement_detected"] = not check_movement()  # Invert because check_movement returns False when movement is detected
+            data["movement_detected"] = not check_movement()  # True when movement detected
         except Exception as e:
             print(f"Error checking movement: {e}")
         
@@ -1730,10 +1761,11 @@ if __name__ == "__main__":
                 # Try without any special window attributes
                 # This approach correctly redefines the run_gui_mode function
                 def simplified_run_gui_mode():
-                    global root, label, alarm_message, snooze_button, hour_spinbox, minute_spinbox
-                    global second_spinbox, alarm_canvas, alarm_list_frame
+                    """Simplified GUI mode with fewer features but more reliability."""
+                    global root, label, alarm_message, snooze_button, alarm_canvas, alarm_list_frame
                     global BG_COLOR, TEXT_COLOR, ACCENT_COLOR, DANGER_COLOR, SUCCESS_COLOR, CARD_BG
                     global title_font, subtitle_font, button_font, text_font
+                    global left_label1, left_label2, distance_label, movement_warning_label
                     
                     # Custom colors (same as original)
                     BG_COLOR = "#121212"  # Dark background
@@ -1745,12 +1777,230 @@ if __name__ == "__main__":
                     
                     # Create the main window with NO special attributes
                     root = tk.Tk()
-                    root.title("Horloge et Alarme")
-                    root.geometry("800x450")
+                    root.title("Alarm System")
+                    root.geometry("800x480")  # Good size for RPi screens
                     root.configure(bg=BG_COLOR)
                     
-                    # Continue with the rest of the GUI setup (identical to run_gui_mode)
-                    # ...
+                    # Font definitions for this simplified mode
+                    title_font = ('Helvetica', 36, 'bold')
+                    subtitle_font = ('Helvetica', 18)
+                    button_font = ('Helvetica', 10, 'bold')
+                    text_font = ('Helvetica', 12)
+                    
+                    # Main layout with two columns
+                    left_frame = tk.Frame(root, bg=BG_COLOR)
+                    left_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+                    
+                    right_frame = tk.Frame(root, bg=BG_COLOR)
+                    right_frame.pack(side="right", fill="both", expand=True, padx=10, pady=10)
+                    
+                    # Clock frame
+                    clock_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=10)
+                    clock_frame.pack(fill="x", pady=10)
+                    
+                    # Clock label
+                    label = tk.Label(clock_frame, font=title_font, fg=TEXT_COLOR, bg=CARD_BG)
+                    label.pack(pady=5)
+                    
+                    # Alarm message
+                    alarm_message = tk.Label(left_frame, text="", font=subtitle_font, fg=DANGER_COLOR, bg=BG_COLOR)
+                    alarm_message.pack(pady=10)
+                    
+                    # Snooze button (hidden by default)
+                    snooze_button = tk.Button(
+                        left_frame,
+                        text="SNOOZE",
+                        command=snooze_alarm,
+                        font=button_font,
+                        bg=DANGER_COLOR,
+                        fg=TEXT_COLOR,
+                        padx=20,
+                        pady=5
+                    )
+                    
+                    # Manual time entry (simpler than wheels)
+                    time_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=10)
+                    time_frame.pack(fill="x", pady=10)
+                    
+                    # Title for alarm section
+                    add_title = tk.Label(time_frame, text="Add New Alarm", font=subtitle_font, 
+                                       fg=ACCENT_COLOR, bg=CARD_BG)
+                    add_title.pack(pady=5)
+                    
+                    # Simple spinbox selectors for time
+                    hour_spinbox = tk.Spinbox(time_frame, from_=0, to=23, width=3, format="%02.0f")
+                    minute_spinbox = tk.Spinbox(time_frame, from_=0, to=59, width=3, format="%02.0f")
+                    second_spinbox = tk.Spinbox(time_frame, from_=0, to=59, width=3, format="%02.0f")
+                    
+                    # Layout the spinboxes
+                    time_selectors = tk.Frame(time_frame, bg=CARD_BG)
+                    time_selectors.pack(pady=5)
+                    
+                    hour_spinbox.pack(side="left", padx=2)
+                    tk.Label(time_selectors, text=":", bg=CARD_BG, fg=TEXT_COLOR).pack(side="left")
+                    minute_spinbox.pack(side="left", padx=2)
+                    tk.Label(time_selectors, text=":", bg=CARD_BG, fg=TEXT_COLOR).pack(side="left")
+                    second_spinbox.pack(side="left", padx=2)
+                    
+                    # Add alarm button
+                    set_alarm_button = tk.Button(
+                        time_frame, 
+                        text="ADD ALARM", 
+                        command=lambda: set_alarm(int(hour_spinbox.get()), 
+                                                 int(minute_spinbox.get()), 
+                                                 int(second_spinbox.get())),
+                        font=button_font,
+                        bg=ACCENT_COLOR,
+                        fg=TEXT_COLOR,
+                        padx=20,
+                        pady=5
+                    )
+                    set_alarm_button.pack(pady=10)
+                    
+                    # Add sensor section for hardware if available
+                    if HARDWARE_AVAILABLE:
+                        sensor_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=10)
+                        sensor_frame.pack(fill="x", pady=10)
+                        
+                        sensor_title = tk.Label(sensor_frame, text="Sensor Information", font=subtitle_font,
+                                              fg=ACCENT_COLOR, bg=CARD_BG)
+                        sensor_title.pack(pady=5)
+                        
+                        left_label1 = tk.Label(sensor_frame, text="Humidity: ---%", font=text_font,
+                                             fg=TEXT_COLOR, bg=CARD_BG)
+                        left_label1.pack(pady=2, anchor="w")
+                        
+                        left_label2 = tk.Label(sensor_frame, text="Temperature: ---°C", font=text_font,
+                                             fg=TEXT_COLOR, bg=CARD_BG)
+                        left_label2.pack(pady=2, anchor="w")
+                        
+                        distance_label = tk.Label(sensor_frame, text="Distance: ---", font=text_font,
+                                                fg=TEXT_COLOR, bg=CARD_BG)
+                        distance_label.pack(pady=2, anchor="w")
+                        
+                        movement_warning_label = tk.Label(sensor_frame, text="", font=text_font,
+                                                        fg=DANGER_COLOR, bg=CARD_BG)
+                        movement_warning_label.pack(pady=2, anchor="w")
+                    
+                    # Alarm list section
+                    list_title = tk.Label(right_frame, text="Your Alarms", font=subtitle_font, 
+                                        fg=ACCENT_COLOR, bg=BG_COLOR)
+                    list_title.pack(pady=5, anchor="w")
+                    
+                    # Simple alarm container
+                    alarm_container = tk.Frame(right_frame, bg=CARD_BG)
+                    alarm_container.pack(fill="both", expand=True)
+                    
+                    # Scrollable canvas
+                    alarm_canvas = tk.Canvas(alarm_container, bg=CARD_BG, highlightthickness=0)
+                    alarm_canvas.pack(side="left", fill="both", expand=True)
+                    
+                    # Scrollbar
+                    scrollbar = tk.Scrollbar(alarm_container, orient="vertical", command=alarm_canvas.yview)
+                    scrollbar.pack(side="right", fill="y")
+                    
+                    # Connect scrollbar to canvas
+                    alarm_canvas.configure(yscrollcommand=scrollbar.set)
+                    
+                    # Frame for alarm list
+                    alarm_list_frame = tk.Frame(alarm_canvas, bg=CARD_BG)
+                    alarm_canvas.create_window((0, 0), window=alarm_list_frame, anchor="nw")
+                    
+                    # Define get_wheel_time function for compatibility
+                    def get_wheel_time():
+                        h = int(hour_spinbox.get())
+                        m = int(minute_spinbox.get())
+                        s = int(second_spinbox.get())
+                        return f"{h:02d}:{m:02d}:{s:02d}"
+                    
+                    # Override global function
+                    globals()['get_wheel_time'] = get_wheel_time
+                    
+                    # Create an update_alarm_list function that works with this UI
+                    def simple_update_alarm_list():
+                        """Simplified alarm list update function."""
+                        try:
+                            if WEB_MODE:
+                                return
+                                
+                            # Sort alarms by time
+                            alarms.sort(key=lambda x: x["time"])
+                            
+                            # Clear existing list
+                            for widget in alarm_list_frame.winfo_children():
+                                widget.destroy()
+                            
+                            # Show message if no alarms
+                            if not alarms:
+                                no_alarms = tk.Label(alarm_list_frame, text="No alarms set", 
+                                                   font=text_font, fg="#888888", bg=CARD_BG)
+                                no_alarms.pack(pady=20)
+                                return
+                            
+                            # Create simple alarm list
+                            for i, alarm in enumerate(alarms):
+                                # Main frame for each alarm
+                                alarm_frame = tk.Frame(alarm_list_frame, bg=CARD_BG, padx=5, pady=5)
+                                alarm_frame.pack(fill="x", pady=5)
+                                
+                                # Time display
+                                time_label = tk.Label(alarm_frame, text=alarm["time"], font=text_font, 
+                                                    fg=TEXT_COLOR, bg=CARD_BG)
+                                time_label.pack(side="left", padx=5)
+                                
+                                # Status label
+                                status_color = SUCCESS_COLOR if alarm["active"] else "#555555"
+                                status_label = tk.Label(alarm_frame, text="ON" if alarm["active"] else "OFF", 
+                                                       font=text_font, fg=status_color, bg=CARD_BG)
+                                status_label.pack(side="left", padx=10)
+                                
+                                # Button frame for controls
+                                btn_frame = tk.Frame(alarm_frame, bg=CARD_BG)
+                                btn_frame.pack(side="right")
+                                
+                                # Toggle button
+                                toggle_btn = tk.Button(
+                                    btn_frame,
+                                    text="Toggle",
+                                    command=lambda i=i: toggle_alarm(i),
+                                    font=button_font,
+                                    bg=ACCENT_COLOR,
+                                    fg=TEXT_COLOR
+                                )
+                                toggle_btn.pack(side="left", padx=2)
+                                
+                                # Delete button
+                                delete_btn = tk.Button(
+                                    btn_frame,
+                                    text="Delete",
+                                    command=lambda i=i: delete_alarm(i),
+                                    font=button_font,
+                                    bg=DANGER_COLOR,
+                                    fg=TEXT_COLOR
+                                )
+                                delete_btn.pack(side="left", padx=2)
+                            
+                            # Update canvas scroll region
+                            alarm_canvas.update_idletasks()
+                            alarm_canvas.config(scrollregion=alarm_canvas.bbox("all"))
+                            
+                        except Exception as e:
+                            print(f"Error updating alarm list: {e}")
+                    
+                    # Override global functions
+                    globals()['styled_update_alarm_list'] = simple_update_alarm_list
+                    
+                    # Init alarm list and start updates
+                    force_refresh_alarms()
+                    update_time()
+                    
+                    # Start sensor updates if hardware is available
+                    if HARDWARE_AVAILABLE:
+                        update_weather()
+                        update_distance_display()
+                    
+                    # Start the main loop
+                    root.mainloop()
                 
                 # Run the simplified version instead
                 simplified_run_gui_mode()

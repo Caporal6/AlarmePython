@@ -1003,6 +1003,120 @@ def test_hardware():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
+@app.route('/test_hardware_fixed', methods=['POST'])
+def test_hardware_fixed():
+    """Test hardware components with better error handling"""
+    try:
+        if not request.is_json:
+            return jsonify({
+                "status": "error", 
+                "message": "Request must be JSON"
+            }), 400
+            
+        data = request.json
+        component = data.get('component', '')
+        action = data.get('action', '')
+        
+        if not component or not action:
+            return jsonify({
+                "status": "error", 
+                "message": "Missing component or action parameter"
+            }), 400
+            
+        # Check for hardware availability
+        try:
+            import sys
+            sys.path.append(".")
+            import interface_1
+            
+            # Check if hardware is available at all
+            if not getattr(interface_1, 'HARDWARE_AVAILABLE', False):
+                return jsonify({
+                    "status": "error", 
+                    "message": "Hardware is not available in this environment"
+                }), 200
+                
+            # Process by component type
+            if component == 'led':
+                led = getattr(interface_1, 'led', None)
+                if not led:
+                    return jsonify({"status": "error", "message": "LED component not found"}), 200
+                    
+                if action == 'on':
+                    led.on()
+                    return jsonify({"status": "success", "message": "LED turned on"}), 200
+                elif action == 'off':
+                    led.off()
+                    return jsonify({"status": "success", "message": "LED turned off"}), 200
+                else:
+                    return jsonify({"status": "error", "message": f"Unknown LED action: {action}"}), 200
+                    
+            elif component == 'servo':
+                servo = getattr(interface_1, 'servo', None)
+                if not servo:
+                    return jsonify({"status": "error", "message": "Servo component not found"}), 200
+                    
+                if action == 'sweep':
+                    # Use a thread to avoid blocking
+                    import threading
+                    import time
+                    
+                    def move_servo_test():
+                        try:
+                            for angle in range(0, 181, 5):
+                                servo.angle = angle
+                                time.sleep(0.01)
+                            for angle in range(180, -1, -5):
+                                servo.angle = angle
+                                time.sleep(0.01)
+                        except Exception as e:
+                            print(f"Error in servo sweep thread: {e}")
+                    
+                    threading.Thread(target=move_servo_test).start()
+                    return jsonify({"status": "success", "message": "Servo moving back and forth"}), 200
+                    
+                elif action == 'center':
+                    servo.angle = 90
+                    return jsonify({"status": "success", "message": "Servo centered at 90°"}), 200
+                else:
+                    return jsonify({"status": "error", "message": f"Unknown servo action: {action}"}), 200
+                    
+            elif component == 'buzzer':
+                buzzer = getattr(interface_1, 'buzzer', None)
+                if not buzzer:
+                    return jsonify({"status": "error", "message": "Buzzer component not found"}), 200
+                    
+                if action == 'on':
+                    buzzer.on()
+                    # Turn off after 1 second
+                    import threading
+                    import time
+                    threading.Timer(1.0, lambda: buzzer.off()).start()
+                    return jsonify({"status": "success", "message": "Buzzer beeped"}), 200
+                elif action == 'off':
+                    buzzer.off()
+                    return jsonify({"status": "success", "message": "Buzzer turned off"}), 200
+                else:
+                    return jsonify({"status": "error", "message": f"Unknown buzzer action: {action}"}), 200
+            else:
+                return jsonify({"status": "error", "message": f"Unknown component: {component}"}), 200
+                
+        except ImportError as e:
+            return jsonify({
+                "status": "error", 
+                "message": f"Failed to import hardware module: {str(e)}"
+            }), 200
+        except Exception as e:
+            return jsonify({
+                "status": "error", 
+                "message": f"Hardware control error: {str(e)}"
+            }), 200
+    except Exception as e:
+        return jsonify({
+            "status": "error", 
+            "message": f"Server error: {str(e)}"
+        }), 500
+
 @app.route('/websocket_test')
 def websocket_test():
     """Test page for WebSocket connections"""
