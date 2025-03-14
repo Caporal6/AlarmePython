@@ -150,7 +150,7 @@ def read_output(process):
             break
 
 def launch_interface_fullscreen():
-    """Launch the Interface 1.py script in a new process"""
+    """Launch the interface_1.py script in a new process"""
     global interface_process
     
     # Check if a process is already running
@@ -171,7 +171,7 @@ def launch_interface_fullscreen():
         
         # Launch with stderr and stdout redirected to see any errors
         interface_process = subprocess.Popen(
-            [sys.executable, 'Interface 1.py'],
+            [sys.executable, 'interface_1.py'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
@@ -211,7 +211,7 @@ def launch_interface_fullscreen():
             print("Trying to launch interface in lxterminal...")
             interface_process = subprocess.Popen([
                 'lxterminal', 
-                '--command', f'python3 "{os.path.join(os.getcwd(), "Interface 1.py")}"', 
+                '--command', f'python3 "{os.path.join(os.getcwd(), "interface_1.py")}"', 
                 '--title=Alarm Interface',
                 '--geometry=maximized'
             ])
@@ -255,7 +255,7 @@ def start_script():
             
             # Start the alarm script with stdout and stderr redirected
             script_process = subprocess.Popen(
-                [sys.executable, 'Interface 1.py'],
+                [sys.executable, 'interface_1.py'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 bufsize=1,
@@ -868,3 +868,116 @@ if __name__ == '__main__':
         # Start Flask server
         print("Starting web server...")
         app.run(debug=False, host='0.0.0.0')  # Set debug to False in production
+
+# Add this route to app.py
+@app.route('/hardware_status')
+def hardware_status():
+    """Return hardware availability status"""
+    try:
+        # Check if interface_1.py is running with hardware
+        from interface_1 import HARDWARE_AVAILABLE
+        return jsonify({
+            "hardware_available": HARDWARE_AVAILABLE,
+            "sensors": {
+                "temperature": True,
+                "humidity": True, 
+                "distance": True,
+                "movement": True
+            } if HARDWARE_AVAILABLE else {}
+        })
+    except ImportError:
+        # If we can't import directly, check if we can find the process
+        return jsonify({
+            "hardware_available": False,
+            "message": "Hardware interface not accessible"
+        })
+
+# Add this route to app.py
+@app.route('/sensor_data')
+def sensor_data():
+    """Return current sensor readings if hardware is available"""
+    try:
+        # Try to import from the interface
+        import sys
+        sys.path.append(".")
+        
+        try:
+            from interface_1 import get_sensor_data
+            data = get_sensor_data()
+            return jsonify(data)
+        except (ImportError, AttributeError):
+            # If the function doesn't exist, create a dummy implementation
+            if interface_process and interface_process.poll() is None:
+                # Interface is running, but we can't directly access its data
+                return jsonify({
+                    "status": "running",
+                    "message": "Interface running but data not accessible"
+                })
+            else:
+                # Interface is not running
+                return jsonify({
+                    "status": "offline",
+                    "message": "Hardware interface not running"
+                })
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        })
+
+@app.route('/test_hardware', methods=['POST'])
+def test_hardware():
+    """Test hardware components"""
+    try:
+        component = request.json.get('component', '')
+        action = request.json.get('action', '')
+        
+        if component == 'led':
+            # Try to control LED
+            try:
+                from interface_1 import led
+                if action == 'on':
+                    led.on()
+                    return jsonify({"status": "success", "message": "LED turned on"})
+                else:
+                    led.off()
+                    return jsonify({"status": "success", "message": "LED turned off"})
+            except Exception as e:
+                return jsonify({"status": "error", "message": f"LED control failed: {str(e)}"})
+        
+        elif component == 'servo':
+            # Try to move servo
+            try:
+                from interface_1 import servo
+                if action == 'sweep':
+                    # Start a thread to move the servo since it blocks
+                    def move_servo_test():
+                        for angle in range(0, 181, 5):  # Faster movement
+                            servo.angle = angle
+                            time.sleep(0.01)
+                        for angle in range(180, -1, -5):
+                            servo.angle = angle
+                            time.sleep(0.01)
+                    
+                    threading.Thread(target=move_servo_test).start()
+                    return jsonify({"status": "success", "message": "Servo moving"})
+            except Exception as e:
+                return jsonify({"status": "error", "message": f"Servo control failed: {str(e)}"})
+        
+        elif component == 'buzzer':
+            # Try to control buzzer
+            try:
+                from interface_1 import buzzer
+                if action == 'on':
+                    buzzer.on()
+                    # Turn off after 1 second
+                    threading.Timer(1.0, lambda: buzzer.off()).start()
+                    return jsonify({"status": "success", "message": "Buzzer beeped"})
+                else:
+                    buzzer.off()
+                    return jsonify({"status": "success", "message": "Buzzer turned off"})
+            except Exception as e:
+                return jsonify({"status": "error", "message": f"Buzzer control failed: {str(e)}"})
+                
+        return jsonify({"status": "error", "message": "Invalid component or action"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})

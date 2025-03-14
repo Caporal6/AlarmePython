@@ -156,4 +156,116 @@ header { background-color: #333; color: #fff; text-align: center; padding: 1rem;
     animation: pulse 1s infinite;
 }
 
+/* Add these styles to style.css */
+#sensorPanel {
+    background-color: #1E1E1E;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    display: none; /* Hidden by default until we confirm hardware is available */
+}
+
+#sensorPanel h3 {
+    color: #BB86FC;
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 18px;
+}
+
+.sensor-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #333;
+}
+
+.sensor-row:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.sensor-label {
+    color: #FFFFFF;
+    font-weight: bold;
+}
+
+.sensor-value {
+    color: #03DAC6;
+    font-family: monospace;
+    font-size: 16px;
+}
+
+.status-good {
+    color: #03DAC6;
+}
+
+.status-warning {
+    color: #CF6679;
+}
+
+#distanceContainer {
+    display: none; /* Only shown when alarm is active */
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed #444;
+}
+
+#distanceStatus {
+    margin-top: 5px;
+    font-weight: bold;
+}
+
+/* Add to your style.css */
+#hardwareTestPanel {
+    background-color: #1E1E1E;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    display: none; /* Hidden by default until we confirm hardware is available */
+}
+
+#hardwareTestPanel h3 {
+    color: #BB86FC;
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 18px;
+}
+
+.test-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.test-controls button {
+    background-color: #BB86FC;
+    color: #121212;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.test-controls button:hover {
+    background-color: #9965CC;
+}
+
+#testResult {
+    margin-top: 10px;
+    font-style: italic;
+}
+
+.text-success {
+    color: #03DAC6;
+}
+
+.text-danger {
+    color: #CF6679;
+}
+
 

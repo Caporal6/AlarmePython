@@ -49,6 +49,41 @@
             </div>
         </div>
         
+        <!-- Add this section to your index.html after the alarm list section -->
+        <div id="sensorPanel">
+            <h3>Sensor Information</h3>
+            <div class="sensor-row">
+                <span class="sensor-label">Temperature:</span>
+                <span id="temperature" class="sensor-value">--°C</span>
+            </div>
+            <div class="sensor-row">
+                <span class="sensor-label">Humidity:</span>
+                <span id="humidity" class="sensor-value">--%</span>
+            </div>
+            <div class="sensor-row">
+                <span class="sensor-label">Movement:</span>
+                <span id="movement" class="sensor-value">Unknown</span>
+            </div>
+            <div id="distanceContainer">
+                <div class="sensor-row">
+                    <span class="sensor-label">Current Distance:</span>
+                    <span id="distance" class="sensor-value">-- cm</span>
+                </div>
+                <div id="distanceStatus">Place at correct distance to snooze</div>
+            </div>
+        </div>
+
+        <!-- Add this section to your index.html after the sensor panel -->
+        <div id="hardwareTestPanel">
+            <h3>Hardware Test</h3>
+            <div class="test-controls">
+                <button id="testLED" class="btn btn-primary">Test LED</button>
+                <button id="testServo" class="btn btn-primary">Test Servo</button>
+                <button id="testBuzzer" class="btn btn-primary">Test Buzzer</button>
+            </div>
+            <div id="testResult" class="mt-2"></div>
+        </div>
+
         <div class="output-panel">
             <h2>Sortie du programme</h2>
             <div class="output-container">

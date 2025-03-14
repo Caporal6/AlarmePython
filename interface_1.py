@@ -5,6 +5,218 @@ import sys
 import json
 import threading
 from pathlib import Path
+import random
+import math
+
+try:
+    # Hardware-specific imports, use try/except to make it work in web mode too
+    from gpiozero import LED, Button, Buzzer, DistanceSensor, AngularServo
+    import Freenove_DHT as DHT
+    import MPU6050
+    
+    # Hardware definitions
+    led = LED(6)
+    myGPIO = 25
+    SERVO_DELAY_SEC = 0.001
+    myCorrection = 0.0
+    maxPW = (2.5 + myCorrection) / 1000
+    minPW = (0.5 - myCorrection) / 1000
+    
+    # Servo initialization
+    servo = AngularServo(myGPIO, initial_angle=0, min_angle=0, max_angle=180, min_pulse_width=minPW, max_pulse_width=maxPW)
+    
+    # Buzzer initialization
+    buzzer = Buzzer(18)
+    
+    # Ultrasonic sensor initialization
+    ultrasonic = DistanceSensor(echo=19, trigger=4, max_distance=4)
+    
+    # DHT11 sensor for temperature and humidity
+    DHTPin = 17
+    
+    # Accelerometer initialization
+    mpu = MPU6050.MPU6050()
+    accel = [0]*3  # Array to store accelerometer data
+    gyro = [0]*3   # Array to store gyroscope data
+    
+    # Initialize MPU6050 accelerometer
+    def setup():
+        mpu.dmp_initialize()
+        print("MPU6050 initialized")
+    
+    # Call setup function to initialize accelerometer
+    setup()
+    
+    HARDWARE_AVAILABLE = True
+except ImportError as e:
+    print(f"Hardware modules not available: {e}")
+    # Create dummy implementations for hardware functions
+    class DummyComponent:
+        def on(self): print("DUMMY: ON called")
+        def off(self): print("DUMMY: OFF called")
+        @property
+        def distance(self): return 0.5  # Return a mid-range value
+        @property
+        def angle(self): return 0
+        @angle.setter
+        def angle(self, value): print(f"DUMMY: Setting angle to {value}")
+    
+    led = DummyComponent()
+    buzzer = DummyComponent()
+    ultrasonic = DummyComponent()
+    servo = DummyComponent()
+    
+    def setup():
+        print("DUMMY: Hardware setup called")
+    
+    HARDWARE_AVAILABLE = False
+
+# Initialize variables for sensors
+last_accel = [0, 0, 0]
+last_gyro = [0, 0, 0]
+movement_threshold = 1000
+excessive_movement_threshold = 15000
+excessive_rotation_threshold = 2000
+distance_Prevue = 50  # Default expected distance in cm
+correct_distance_time = 0
+distance_history = []
+stable_time = 0
+
+# Function to calculate variation between two vector values
+def calculate_variation(new_values, last_values):
+    return [abs(new_values[i] - last_values[i]) for i in range(len(new_values))]
+
+# Function to check movement from accelerometer
+def check_movement():
+    global last_accel, last_gyro
+    
+    if not HARDWARE_AVAILABLE:
+        # Return random movement for testing in web mode
+        import random
+        return random.choice([True, False])
+    
+    try:
+        accel = mpu.get_acceleration()  # Get accelerometer data
+        gyro = mpu.get_rotation()      # Get gyroscope data
+        
+        # Calculate variation from last readings
+        accel_variation = calculate_variation(accel, last_accel)
+        gyro_variation = calculate_variation(gyro, last_gyro)
+        
+        # Update last values
+        last_accel = accel
+        last_gyro = gyro
+        
+        # Calculate magnitudes
+        accel_magnitude = math.sqrt(accel[0]**2 + accel[1]**2 + accel[2]**2)
+        gyro_magnitude = math.sqrt(gyro[0]**2 + gyro[1]**2 + gyro[2]**2)
+        
+        # Check for excessive movement
+        if any(variation > excessive_movement_threshold for variation in accel_variation) or \
+           any(variation > excessive_rotation_threshold for variation in gyro_variation):
+            if 'movement_warning_label' in globals() and movement_warning_label and not WEB_MODE:
+                movement_warning_label.config(text="Mouvement excessif détecté!")
+            return False
+        
+        # Check for regular movement
+        elif accel_magnitude > movement_threshold or gyro_magnitude > movement_threshold:
+            return True
+            
+        return False
+    except Exception as e:
+        print(f"Error in check_movement: {e}")
+        return False
+
+# Function to check distance and handle alarm snooze
+def check_distance():
+    global alarm_active, correct_distance_time
+    
+    if not alarm_active:
+        return
+    
+    if not HARDWARE_AVAILABLE:
+        # In web mode or when hardware isn't available
+        return
+    
+    try:
+        current_distance = ultrasonic.distance * 100  # Convert to cm
+        
+        if not check_movement():
+            if 'movement_warning_label' in globals() and not WEB_MODE:
+                movement_warning_label.config(text="Mouvement détecté!")
+        else:
+            if 'movement_warning_label' in globals() and not WEB_MODE:
+                movement_warning_label.config(text="")
+                
+            if current_distance < distance_Prevue - 10:
+                if 'distance_label' in globals() and not WEB_MODE:
+                    distance_label.config(text=f"Trop proche: {current_distance:.2f} cm")
+                correct_distance_time = 0
+            elif current_distance > distance_Prevue + 10:
+                if 'distance_label' in globals() and not WEB_MODE:
+                    distance_label.config(text=f"Trop loin: {current_distance:.2f} cm")
+                correct_distance_time = 0
+            else:
+                if 'distance_label' in globals() and not WEB_MODE:
+                    distance_label.config(text=f"Vous êtes à la bonne distance: {current_distance:.2f} cm")
+                correct_distance_time += 1
+                
+                if correct_distance_time >= 3:
+                    snooze_alarm()  # Automatically snooze when at correct distance for 3 seconds
+                    if 'distance_label' in globals() and not WEB_MODE:
+                        distance_label.config(text="")
+                    return
+        
+        # Schedule next check if still active
+        if not WEB_MODE and alarm_active and 'root' in globals():
+            root.after(1000, check_distance)
+    except Exception as e:
+        print(f"Error in check_distance: {e}")
+
+# Function to move the servo motor
+def move_servo():
+    global alarm_active
+    
+    if not HARDWARE_AVAILABLE or not alarm_active:
+        return
+    
+    try:
+        # Move servo from 0 to 180 degrees
+        for angle in range(0, 181, 1):
+            servo.angle = angle
+            time.sleep(SERVO_DELAY_SEC)
+            
+        # Move servo from 180 to 0 degrees
+        for angle in range(180, -1, -1):
+            servo.angle = angle
+            time.sleep(SERVO_DELAY_SEC)
+            
+        # Continue movement while alarm is active
+        if alarm_active and not WEB_MODE and 'root' in globals():
+            root.after(1, move_servo)
+    except Exception as e:
+        print(f"Error moving servo: {e}")
+
+# Function to update temperature and humidity
+def update_weather():
+    if not HARDWARE_AVAILABLE or WEB_MODE:
+        return
+    
+    try:
+        dht = DHT.DHT(DHTPin)
+        chk = dht.readDHT11()
+        if chk == 0:
+            humidity = dht.getHumidity()
+            temperature = dht.getTemperature()
+            
+            if 'left_label1' in globals() and 'left_label2' in globals():
+                left_label1.config(text=f"Humidité: {humidity:.2f}%")
+                left_label2.config(text=f"Température: {temperature:.2f}°C")
+    except Exception as e:
+        print(f"Error updating weather: {e}")
+        
+    if not WEB_MODE and 'root' in globals():
+        root.after(60000, update_weather)  # Update every minute
 
 print("Interface 1.py starting...")
 
@@ -483,7 +695,7 @@ def update_time():
 
 def check_alarm(current_time):
     """Vérifie si une alarme doit sonner."""
-    global alarm_active
+    global alarm_active, distance_Prevue
     
     # Check if we're running in GUI mode and if snooze_button exists
     has_snooze_button = 'snooze_button' in globals() if not WEB_MODE else False
@@ -496,9 +708,19 @@ def check_alarm(current_time):
         if state["alarm_active"] and not alarm_active:
             alarm_active = True
             if not WEB_MODE:
-                alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
+                if 'alarm_message' in globals():
+                    alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
                 if has_snooze_button:
-                    snooze_button.pack(pady=10)  # Affiche le bouton Snooze
+                    snooze_button.pack(pady=10)  # Show the snooze button
+                
+                # Start the hardware actions for the alarm
+                if HARDWARE_AVAILABLE:
+                    led.on()
+                    buzzer.on()
+                    distance_Prevue = random.uniform(0.2, 1.2) * 100  # Random expected distance
+                    print(f"Distance prévue: {distance_Prevue:.2f} cm")
+                    check_distance()  # Start distance checking
+                    move_servo()      # Start servo movement
             else:
                 print(f"🔔 ALARM TRIGGERED from web: {state['message']}")
             return
@@ -507,19 +729,34 @@ def check_alarm(current_time):
         if not state["alarm_active"] and alarm_active:
             alarm_active = False
             if not WEB_MODE:
-                alarm_message.config(text="")
+                if 'alarm_message' in globals():
+                    alarm_message.config(text="")
                 if has_snooze_button:
-                    snooze_button.pack_forget()
+                    snooze_button.pack_forget()  # Hide the snooze button
+                
+                # Stop hardware actions
+                if HARDWARE_AVAILABLE:
+                    led.off()
+                    buzzer.off()
         
         # Regular alarm checking logic
         for alarm in alarms:
             if alarm["active"] and alarm["time"] == current_time and not alarm_active:
                 if not WEB_MODE:
-                    alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
+                    if 'alarm_message' in globals():
+                        alarm_message.config(text="🔥 YOUPIII 🔥", fg="red")
                     
-                    # Only use snooze_button if it exists
                     if has_snooze_button:
-                        snooze_button.pack(pady=10)  # Affiche le bouton Snooze
+                        snooze_button.pack(pady=10)  # Show the snooze button
+                    
+                    # Start hardware actions for the alarm
+                    if HARDWARE_AVAILABLE:
+                        led.on()
+                        buzzer.on()
+                        distance_Prevue = random.uniform(0.2, 1.2) * 100  # Random expected distance
+                        print(f"Distance prévue: {distance_Prevue:.2f} cm")
+                        check_distance()  # Start distance checking
+                        move_servo()      # Start servo movement
                 else:
                     print(f"🔔 ALARM TRIGGERED: {alarm['time']}")
                 
@@ -527,20 +764,20 @@ def check_alarm(current_time):
                 set_state(True, f"Alarm triggered at {current_time}")
                 
                 alarm_active = True
-                return  # Affiche "YOUPIII" dès qu'une alarme est déclenchée
+                return
         
         if not alarm_active:
             if not WEB_MODE:
-                alarm_message.config(text="")  # Efface le message si aucune alarme ne sonne
+                if 'alarm_message' in globals():
+                    alarm_message.config(text="")  # Clear message if no alarm is sounding
                 
                 # Only hide snooze_button if it exists
                 if has_snooze_button:
-                    snooze_button.pack_forget()  # Cache le bouton Snooze
+                    snooze_button.pack_forget()  # Hide the snooze button
     except Exception as e:
         print(f"Error in check_alarm: {e}")
         # If an error occurs, try to recover by resetting the alarm state
         if alarm_active:
-            print("Attempting to reset alarm state due to error")
             reset_alarm_state()
 
 def snooze_alarm():
@@ -551,6 +788,17 @@ def snooze_alarm():
             alarm_message.config(text="")
         if 'snooze_button' in globals():
             snooze_button.pack_forget()
+        
+        # Turn off hardware components
+        if HARDWARE_AVAILABLE:
+            led.off()
+            buzzer.off()
+        
+        # Clear any warning messages
+        if 'movement_warning_label' in globals():
+            movement_warning_label.config(text="")
+        if 'distance_label' in globals():
+            distance_label.config(text="")
     else:
         print("Alarm snoozed")
     
@@ -558,7 +806,7 @@ def snooze_alarm():
     clear_state()
     
     # MQTT publish
-    if mqtt_client:
+    if mqtt_client and hasattr(mqtt_client, 'publish'):
         try:
             mqtt_client.publish("alarm/state", json.dumps({
                 "alarm_active": False,
@@ -1344,6 +1592,40 @@ def run_gui_mode():
     # Initial setup of alarms - NOW it's safe to do this
     force_refresh_alarms()
     
+    # Add sensor information section if hardware is available
+    if HARDWARE_AVAILABLE:
+        # Create sensor frame
+        sensor_frame = tk.Frame(left_frame, bg=CARD_BG, padx=15, pady=10)
+        sensor_frame.pack(fill="x", pady=5)
+        
+        # Title for sensor section
+        sensor_title = tk.Label(sensor_frame, text="Sensor Information", font=subtitle_font,
+                               fg=ACCENT_COLOR, bg=CARD_BG)
+        sensor_title.pack(pady=(0, 5))
+        
+        # Create temperature and humidity labels
+        left_label1 = tk.Label(sensor_frame, text="Humidity: ---%", font=text_font,
+                             fg=TEXT_COLOR, bg=CARD_BG)
+        left_label1.pack(pady=2, anchor="w")
+        
+        left_label2 = tk.Label(sensor_frame, text="Temperature: ---°C", font=text_font,
+                             fg=TEXT_COLOR, bg=CARD_BG)
+        left_label2.pack(pady=2, anchor="w")
+        
+        # Create distance label
+        distance_label = tk.Label(sensor_frame, text="Distance: ---", font=text_font,
+                                fg=TEXT_COLOR, bg=CARD_BG)
+        distance_label.pack(pady=2, anchor="w")
+        
+        # Create movement warning label
+        movement_warning_label = tk.Label(sensor_frame, text="", font=text_font,
+                                        fg=DANGER_COLOR, bg=CARD_BG)
+        movement_warning_label.pack(pady=2, anchor="w")
+    
+    # Start weather and sensor updates if hardware is available
+    if HARDWARE_AVAILABLE:
+        update_weather()
+
     # Now start the main event loop with proper error handling
     print("Starting main event loop...")
     try:
@@ -1386,6 +1668,49 @@ def run_web_mode():
     while True:
         update_time()
         time.sleep(1)
+
+def get_sensor_data():
+    """Get current sensor data for web interface"""
+    data = {
+        "hardware_available": HARDWARE_AVAILABLE,
+        "timestamp": time.time()
+    }
+    
+    if not HARDWARE_AVAILABLE:
+        return data
+    
+    try:
+        # Get temperature and humidity if available
+        try:
+            dht = DHT.DHT(DHTPin)
+            chk = dht.readDHT11()
+            if chk == 0:
+                data["temperature"] = dht.getTemperature()
+                data["humidity"] = dht.getHumidity()
+        except Exception as e:
+            print(f"Error reading temperature/humidity: {e}")
+        
+        # Get distance if available
+        try:
+            data["distance"] = ultrasonic.distance * 100  # Convert to cm
+        except Exception as e:
+            print(f"Error reading distance: {e}")
+        
+        # Get movement status
+        try:
+            data["movement_detected"] = not check_movement()  # Invert because check_movement returns False when movement is detected
+        except Exception as e:
+            print(f"Error checking movement: {e}")
+        
+        # Add alarm state
+        data["alarm_active"] = alarm_active
+        if alarm_active:
+            data["distance_expected"] = distance_Prevue
+        
+    except Exception as e:
+        print(f"Error getting sensor data: {e}")
+    
+    return data
 
 if __name__ == "__main__":
     print(f"Starting in {'web' if WEB_MODE else 'GUI'} mode")

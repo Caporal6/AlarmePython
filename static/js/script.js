@@ -1,6 +1,8 @@
 // MQTT client
 let mqttClient = null;
 let alarmNotificationShown = false;
+let hardwareAvailable = false;
+let sensorUpdateInterval = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     // Elements
@@ -91,6 +93,22 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 1000);
         });
     }
+    
+    // Initialize hardware availability check
+    checkHardwareAvailability();
+
+    // Add event listeners for hardware test buttons
+    document.getElementById('testLED').addEventListener('click', function() {
+        testHardware('led', 'on');
+    });
+
+    document.getElementById('testServo').addEventListener('click', function() {
+        testHardware('servo', 'sweep');
+    });
+
+    document.getElementById('testBuzzer').addEventListener('click', function() {
+        testHardware('buzzer', 'on');
+    });
 });
 
 function initializeMQTT() {
@@ -581,4 +599,118 @@ function appendOutput(text) {
     // Auto-scroll to bottom
     const outputContainer = outputElement.parentElement;
     outputContainer.scrollTop = outputContainer.scrollHeight;
+}
+
+// Check if hardware is available when page loads
+function checkHardwareAvailability() {
+    fetch('/hardware_status')
+        .then(response => response.json())
+        .then(data => {
+            hardwareAvailable = data.hardware_available;
+            if (hardwareAvailable) {
+                console.log("Hardware interface available, enabling sensor display");
+                document.getElementById('sensorPanel').style.display = 'block';
+                document.getElementById('hardwareTestPanel').style.display = 'block';
+                // Start polling sensor data
+                updateSensorData();
+                sensorUpdateInterval = setInterval(updateSensorData, 2000);
+            } else {
+                console.log("Hardware interface not available");
+                document.getElementById('sensorPanel').style.display = 'none';
+                document.getElementById('hardwareTestPanel').style.display = 'none';
+            }
+        })
+        .catch(error => {
+            console.error("Error checking hardware availability:", error);
+        });
+}
+
+// Poll sensor data from the backend
+function updateSensorData() {
+    fetch('/sensor_data')
+        .then(response => response.json())
+        .then(data => {
+            if (data.hardware_available) {
+                // Update temperature and humidity
+                if ('temperature' in data) {
+                    document.getElementById('temperature').textContent = `${data.temperature.toFixed(1)}°C`;
+                }
+                if ('humidity' in data) {
+                    document.getElementById('humidity').textContent = `${data.humidity.toFixed(1)}%`;
+                }
+                
+                // Update distance if alarm is active
+                if (data.alarm_active && 'distance' in data) {
+                    const distanceElement = document.getElementById('distance');
+                    const distanceStatus = document.getElementById('distanceStatus');
+                    
+                    distanceElement.textContent = `${data.distance.toFixed(1)} cm`;
+                    
+                    if (data.distance_expected) {
+                        const diff = Math.abs(data.distance - data.distance_expected);
+                        if (diff <= 10) {
+                            distanceStatus.textContent = "Good distance!";
+                            distanceStatus.className = "status-good";
+                        } else if (data.distance < data.distance_expected) {
+                            distanceStatus.textContent = "Too close!";
+                            distanceStatus.className = "status-warning";
+                        } else {
+                            distanceStatus.textContent = "Too far!";
+                            distanceStatus.className = "status-warning";
+                        }
+                    }
+                    
+                    document.getElementById('distanceContainer').style.display = 'block';
+                } else {
+                    document.getElementById('distanceContainer').style.display = 'none';
+                }
+                
+                // Update movement status
+                if ('movement_detected' in data) {
+                    const movementElement = document.getElementById('movement');
+                    if (data.movement_detected) {
+                        movementElement.textContent = "Movement detected!";
+                        movementElement.className = "status-warning";
+                    } else {
+                        movementElement.textContent = "No movement";
+                        movementElement.className = "status-good";
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error("Error updating sensor data:", error);
+        });
+}
+
+// Function to test hardware components
+function testHardware(component, action) {
+    const resultElement = document.getElementById('testResult');
+    resultElement.textContent = `Testing ${component}...`;
+    resultElement.className = '';
+    
+    fetch('/test_hardware', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            component: component,
+            action: action
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            resultElement.textContent = data.message;
+            resultElement.className = 'text-success';
+        } else {
+            resultElement.textContent = data.message;
+            resultElement.className = 'text-danger';
+        }
+    })
+    .catch(error => {
+        resultElement.textContent = `Error: ${error.message}`;
+        resultElement.className = 'text-danger';
+    });
 }
