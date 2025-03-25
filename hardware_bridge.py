@@ -258,16 +258,18 @@ def control_hardware(component, action):
 # For testing
 if __name__ == "__main__":
     print(f"Hardware available: {HARDWARE_AVAILABLE}")
-    print(f"Components: {list(HARDWARE_COMPONENTS.keys())}")
-    print("Sensor data:", get_sensor_data())
+    print(f"Hardware components: {list(HARDWARE_COMPONENTS.keys())}")
     
-    # If hardware is available, test components
+    # Test hardware controls
     if HARDWARE_AVAILABLE:
-        print("\nTesting components:")
-        for component_name in HARDWARE_COMPONENTS:
-            print(f"Testing {component_name}...")
-            result = control_hardware(component_name, 'on')
-            print(f"Result: {result}")
-            time.sleep(1)
-            result = control_hardware(component_name, 'off')
-            print(f"Result: {result}")
+        components = ['led', 'buzzer']
+        for component in components:
+            if component in HARDWARE_COMPONENTS:
+                print(f"Testing {component}...")
+                result = control_hardware(component, 'on')
+                print(f"  Result: {result}")
+                time.sleep(1)
+                result = control_hardware(component, 'off')
+                print(f"  Result: {result}")
+            else:
+                print(f"Component {component} not available")

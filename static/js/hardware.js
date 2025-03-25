@@ -126,37 +126,59 @@ function testHardwareComponent(component, action) {
         testResult.className = '';
     }
     
-    // Try the simple endpoint first as it's most likely to work
-    fetch('/simple_test', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            component: component,
-            action: action
+    // Try in sequence until one works
+    const endpoints = [
+        '/simple_test',
+        '/test_hardware_fixed',
+        '/test_hardware'
+    ];
+    
+    // Try each endpoint
+    tryNextEndpoint(0);
+    
+    function tryNextEndpoint(index) {
+        if (index >= endpoints.length) {
+            if (testResult) {
+                testResult.textContent = "All endpoints failed";
+                testResult.className = 'error';
+            }
+            console.error("All hardware test endpoints failed");
+            return;
+        }
+        
+        const endpoint = endpoints[index];
+        console.log(`Trying endpoint: ${endpoint}`);
+        
+        fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                component: component,
+                action: action
+            })
         })
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
-        }
-        return response.json();
-    })
-    .then(data => {
-        console.log("Hardware test response:", data);
-        if (testResult) {
-            testResult.textContent = data.message || "Test completed";
-            testResult.className = data.status === 'success' ? 'success' : 'error';
-        }
-    })
-    .catch(error => {
-        console.error("Hardware test error:", error);
-        if (testResult) {
-            testResult.textContent = `Error: ${error.message}`;
-            testResult.className = 'error';
-        }
-    });
+        .then(response => {
+            if (!response.ok) {
+                console.log(`Endpoint ${endpoint} returned ${response.status}`);
+                throw new Error(`HTTP error: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log(`Response from ${endpoint}:`, data);
+            if (testResult) {
+                testResult.textContent = data.message || "Test completed";
+                testResult.className = data.status === 'success' ? 'success' : 'error';
+            }
+        })
+        .catch(error => {
+            console.error(`Error with ${endpoint}:`, error);
+            // Try next endpoint
+            tryNextEndpoint(index + 1);
+        });
+    }
 }
 
 // This function tries multiple endpoints in sequence until one works

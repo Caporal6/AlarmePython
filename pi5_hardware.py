@@ -55,6 +55,11 @@ try:
         try:
             h = lgpio.gpiochip_open(4)  # Use chip 4 for Raspberry Pi 5
             print(f"Successfully opened gpiochip4, handle: {h}")
+            # Set pins as output
+            lgpio.gpio_claim_output(h, LED_PIN)
+            lgpio.gpio_claim_output(h, BUZZER_PIN)
+            # Set the hardware available flag to True!
+            HARDWARE_AVAILABLE = True
         except Exception as e:
             print(f"Error opening gpiochip4: {e}")
             # Try alternative chip numbers
