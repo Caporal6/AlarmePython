@@ -1124,6 +1124,96 @@ def simple_test():
             "message": str(e)
         })
 
+@app.route('/pi5_direct_test', methods=['GET', 'POST'])
+def pi5_direct_test():
+    """Direct hardware test for Pi 5"""
+    try:
+        # Check if we're on a Pi 5
+        pi5_mode = False
+        try:
+            with open('/proc/device-tree/model', 'r') as f:
+                model = f.read()
+                pi5_mode = 'Raspberry Pi 5' in model
+        except:
+            pass
+            
+        if not pi5_mode:
+            return jsonify({
+                "status": "error",
+                "message": "This endpoint is only for Raspberry Pi 5"
+            })
+            
+        # Get component and action
+        component = "led"  # Default
+        action = "on"      # Default
+        
+        if request.method == 'POST' and request.is_json:
+            data = request.json
+            component = data.get('component', component)
+            action = data.get('action', action)
+            
+        # Direct GPIO control
+        try:
+            import RPi.GPIO as GPIO
+            
+            # Set up GPIO
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setwarnings(False)
+            
+            # Define pin mappings
+            pins = {
+                "led": 6,
+                "buzzer": 18
+            }
+            
+            if component not in pins:
+                return jsonify({
+                    "status": "error",
+                    "message": f"Unknown component: {component}"
+                })
+                
+            pin = pins[component]
+            GPIO.setup(pin, GPIO.OUT)
+            
+            if action == "on":
+                GPIO.output(pin, GPIO.HIGH)
+                # For buzzer, turn off after 1 second
+                if component == "buzzer":
+                    import threading
+                    threading.Timer(1.0, lambda: GPIO.output(pin, GPIO.LOW)).start()
+                return jsonify({
+                    "status": "success",
+                    "message": f"{component} turned on"
+                })
+            elif action == "off":
+                GPIO.output(pin, GPIO.LOW)
+                return jsonify({
+                    "status": "success",
+                    "message": f"{component} turned off"
+                })
+            else:
+                return jsonify({
+                    "status": "error",
+                    "message": f"Unknown action: {action}"
+                })
+                
+        except ImportError:
+            return jsonify({
+                "status": "error",
+                "message": "GPIO library not available"
+            })
+        except Exception as e:
+            return jsonify({
+                "status": "error",
+                "message": f"GPIO error: {str(e)}"
+            })
+            
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        })
+
 @app.route('/debug/sensor')
 def debug_sensor():
     """Debug endpoint for sensor data"""

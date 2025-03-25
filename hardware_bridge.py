@@ -7,6 +7,46 @@ import random
 import subprocess
 import importlib.util
 
+# Add at the top of hardware_bridge.py
+PI5_MODE = False
+try:
+    with open('/proc/device-tree/model', 'r') as f:
+        model = f.read()
+        PI5_MODE = 'Raspberry Pi 5' in model
+        print(f"System model: {model.strip()}")
+except:
+    pass
+
+print(f"Pi 5 mode: {PI5_MODE}")
+
+# If on Pi 5, try direct GPIO access first
+if PI5_MODE:
+    try:
+        import RPi.GPIO as GPIO
+        print("Successfully imported RPi.GPIO for Pi 5")
+        
+        # Set up GPIO
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setwarnings(False)
+        
+        # Define pin mappings - adjust these to match your hardware
+        LED_PIN = 6
+        BUZZER_PIN = 18
+        
+        # Set up pins
+        GPIO.setup(LED_PIN, GPIO.OUT)
+        GPIO.setup(BUZZER_PIN, GPIO.OUT)
+        
+        # Set all outputs to LOW initially
+        GPIO.output(LED_PIN, GPIO.LOW)
+        GPIO.output(BUZZER_PIN, GPIO.LOW)
+        
+        # Flag that hardware is available
+        HARDWARE_AVAILABLE = True
+        print("Direct GPIO access successful")
+    except Exception as e:
+        print(f"Direct GPIO access failed: {e}")
+
 # Detect if we're on a Pi 5
 def is_pi5():
     try:
