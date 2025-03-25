@@ -683,7 +683,7 @@ function updateSensorData() {
         });
 }
 
-// Function to test hardware components
+// Function to test hardware components with proper error handling
 function testHardware(component, action) {
     const resultElement = document.getElementById('testResult');
     if (resultElement) {

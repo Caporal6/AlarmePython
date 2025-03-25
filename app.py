@@ -829,85 +829,32 @@ def hardware_test_page():
     """Dedicated page for testing hardware components"""
     return render_template('hardware_test.html')
 
-if __name__ == '__main__':
-    # Start publishing alarm state
-    threading.Timer(2.0, publish_alarm_state_loop).start()
-    
-    # Rest of your main code...
 
-if __name__ == '__main__':
-    # Check if running in virtual environment
-    import sys
-    import os
-    
-    in_venv = sys.prefix != sys.base_prefix
-    if not in_venv and not os.environ.get('SKIP_VENV_CHECK'):
-        print("Warning: Not running in a virtual environment.")
-        print("For best results, run this application using the run_alarm.sh script.")
-        print("If you want to bypass this check, set SKIP_VENV_CHECK=1 in your environment.")
-        print("Continuing anyway in 3 seconds...")
-        time.sleep(3)
-    
-    # Get command-line argument for mode
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--gui', action='store_true', help='Launch GUI interface only')
-    parser.add_argument('--web', action='store_true', help='Launch web interface only')
-    parser.add_argument('--both', action='store_true', help='Launch both interfaces')
-    parser.add_argument('--mqtt-broker', default='localhost', help='MQTT broker host')
-    args = parser.parse_args()
-    
-    # Update MQTT configuration from command line if provided
-    if args.mqtt_broker:
-        app.config['MQTT_BROKER_URL'] = args.mqtt_broker
-    
-    # Determine which mode to launch
-    launch_gui = args.gui or args.both or not (args.gui or args.web or args.both)
-    launch_web = args.web or args.both or not (args.gui or args.web or args.both)
-    
-    print(f"Starting in {'GUI' if launch_gui else ''}{' and ' if launch_gui and launch_web else ''}{'Web' if launch_web else ''} mode")
-    print(f"Using MQTT broker: {app.config['MQTT_BROKER_URL']}")
-    
-    # Start publishing alarm state
-    threading.Timer(2.0, publish_alarm_state_loop).start()
-    
-    # Launch the interfaces in the correct order
-    if launch_gui:
-        # Launch the interface in fullscreen
-        if launch_interface_fullscreen():
-            print("GUI interface launched successfully")
-        else:
-            print("Failed to launch GUI interface")
-    
-    if launch_web:
-        # Start Flask server
-        print("Starting web server...")
-        app.run(debug=False, host='0.0.0.0')  # Set debug to False in production
-
-# Add this route to app.py
+# Hardware API routes
 @app.route('/hardware_status')
 def hardware_status():
     """Return hardware availability status"""
     try:
-        # Check if interface_1.py is running with hardware
+        import sys
+        sys.path.append(".")
         from interface_1 import HARDWARE_AVAILABLE
+        
         return jsonify({
             "hardware_available": HARDWARE_AVAILABLE,
             "sensors": {
                 "temperature": True,
-                "humidity": True, 
+                "humidity": True,
                 "distance": True,
                 "movement": True
             } if HARDWARE_AVAILABLE else {}
         })
-    except ImportError:
-        # If we can't import directly, check if we can find the process
+    except ImportError as e:
+        print(f"Error importing interface_1 module: {e}")
         return jsonify({
             "hardware_available": False,
             "message": "Hardware interface not accessible"
         })
 
-# Add this route to app.py
 @app.route('/sensor_data')
 def sensor_data():
     """Return current sensor readings if hardware is available"""
@@ -917,91 +864,27 @@ def sensor_data():
         sys.path.append(".")
         
         try:
+            # First check if the interface_1 module has a get_sensor_data function
             from interface_1 import get_sensor_data
             data = get_sensor_data()
             return jsonify(data)
-        except (ImportError, AttributeError):
-            # If the function doesn't exist, create a dummy implementation
-            if interface_process and interface_process.poll() is None:
-                # Interface is running, but we can't directly access its data
-                return jsonify({
-                    "status": "running",
-                    "message": "Interface running but data not accessible"
-                })
-            else:
-                # Interface is not running
-                return jsonify({
-                    "status": "offline",
-                    "message": "Hardware interface not running"
-                })
+        except (ImportError, AttributeError) as e:
+            print(f"Error accessing sensor data: {e}")
+            
+            # Create a dummy response with error message
+            return jsonify({
+                "hardware_available": False,
+                "error": "Cannot access sensor data function",
+                "message": str(e),
+                "timestamp": time.time()
+            })
     except Exception as e:
+        print(f"Sensor data error: {e}")
         return jsonify({
-            "error": str(e)
+            "hardware_available": False,
+            "error": str(e),
+            "timestamp": time.time()
         })
-
-@app.route('/test_hardware', methods=['POST'])
-def test_hardware():
-    """Test hardware components"""
-    try:
-        component = request.json.get('component', '')
-        action = request.json.get('action', '')
-        
-        if component == 'led':
-            # Try to control LED
-            try:
-                from interface_1 import led
-                if action == 'on':
-                    led.on()
-                    return jsonify({"status": "success", "message": "LED turned on"})
-                else:
-                    led.off()
-                    return jsonify({"status": "success", "message": "LED turned off"})
-            except Exception as e:
-                return jsonify({"status": "error", "message": f"LED control failed: {str(e)}"})
-        
-        elif component == 'servo':
-            # Try to move servo
-            try:
-                from interface_1 import servo
-                if action == 'sweep':
-                    # Start a thread to move the servo since it blocks
-                    def move_servo_test():
-                        for angle in range(0, 181, 5):  # Faster movement
-                            servo.angle = angle
-                            time.sleep(0.01)
-                        for angle in range(180, -1, -5):
-                            servo.angle = angle
-                            time.sleep(0.01)
-                    
-                    threading.Thread(target=move_servo_test).start()
-                    return jsonify({"status": "success", "message": "Servo moving back and forth"})
-                    
-                elif action == 'center':
-                    # Move servo to center position (90 degrees)
-                    servo.angle = 90
-                    return jsonify({"status": "success", "message": "Servo centered at 90°"})
-                    
-            except Exception as e:
-                return jsonify({"status": "error", "message": f"Servo control failed: {str(e)}"})
-        
-        elif component == 'buzzer':
-            # Try to control buzzer
-            try:
-                from interface_1 import buzzer
-                if action == 'on':
-                    buzzer.on()
-                    # Turn off after 1 second
-                    threading.Timer(1.0, lambda: buzzer.off()).start()
-                    return jsonify({"status": "success", "message": "Buzzer beeped"})
-                else:
-                    buzzer.off()
-                    return jsonify({"status": "success", "message": "Buzzer turned off"})
-            except Exception as e:
-                return jsonify({"status": "error", "message": f"Buzzer control failed: {str(e)}"})
-                
-        return jsonify({"status": "error", "message": "Invalid component or action"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/test_hardware_fixed', methods=['POST'])
 def test_hardware_fixed():
@@ -1117,12 +1000,174 @@ def test_hardware_fixed():
             "message": f"Server error: {str(e)}"
         }), 500
 
-@app.route('/websocket_test')
-def websocket_test():
-    """Test page for WebSocket connections"""
-    return render_template('test.html')
+@app.route('/debug/sensor')
+def debug_sensor():
+    """Debug endpoint for sensor data"""
+    import time
+    info = {
+        "timestamp": time.time(),
+        "routes": [rule.rule for rule in app.url_map.iter_rules()],
+        "modules": []
+    }
+    
+    # Try to import interface modules
+    try:
+        import sys
+        sys.path.append(".")
+        info["sys_path"] = sys.path
+        
+        # Check interface_1
+        try:
+            import interface_1
+            info["interface_1_imported"] = True
+            info["hardware_available"] = getattr(interface_1, 'HARDWARE_AVAILABLE', False)
+            info["has_get_sensor_data"] = hasattr(interface_1, 'get_sensor_data')
+            
+            # If get_sensor_data exists, try calling it
+            if info["has_get_sensor_data"]:
+                try:
+                    sensor_data = interface_1.get_sensor_data()
+                    info["sensor_data_call_success"] = True
+                    info["sensor_data_result"] = sensor_data
+                except Exception as e:
+                    info["sensor_data_call_success"] = False
+                    info["sensor_data_error"] = str(e)
+            
+            # Check for specific components
+            if info["hardware_available"]:
+                components = ["led", "buzzer", "servo", "ultrasonic"]
+                for comp in components:
+                    info[f"has_{comp}"] = hasattr(interface_1, comp)
+            
+        except ImportError as e:
+            info["interface_1_imported"] = False
+            info["interface_1_error"] = str(e)
+        
+        # List all available Python files
+        import os
+        info["python_files"] = [f for f in os.listdir(".") if f.endswith(".py")]
+        
+    except Exception as e:
+        info["error"] = str(e)
+    
+    return jsonify(info)
+if __name__ == '__main__':
+    # Start publishing alarm state
+    threading.Timer(2.0, publish_alarm_state_loop).start()
+    
+    # Rest of your main code...
 
-@app.route('/hardware_test_page')
-def hardware_test_page():
-    """Dedicated page for testing hardware components"""
-    return render_template('hardware_test.html')
+if __name__ == '__main__':
+    # Check if running in virtual environment
+    import sys
+    import os
+    
+    in_venv = sys.prefix != sys.base_prefix
+    if not in_venv and not os.environ.get('SKIP_VENV_CHECK'):
+        print("Warning: Not running in a virtual environment.")
+        print("For best results, run this application using the run_alarm.sh script.")
+        print("If you want to bypass this check, set SKIP_VENV_CHECK=1 in your environment.")
+        print("Continuing anyway in 3 seconds...")
+        time.sleep(3)
+    
+    # Get command-line argument for mode
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--gui', action='store_true', help='Launch GUI interface only')
+    parser.add_argument('--web', action='store_true', help='Launch web interface only')
+    parser.add_argument('--both', action='store_true', help='Launch both interfaces')
+    parser.add_argument('--mqtt-broker', default='localhost', help='MQTT broker host')
+    args = parser.parse_args()
+    
+    # Update MQTT configuration from command line if provided
+    if args.mqtt_broker:
+        app.config['MQTT_BROKER_URL'] = args.mqtt_broker
+    
+    # Determine which mode to launch
+    launch_gui = args.gui or args.both or not (args.gui or args.web or args.both)
+    launch_web = args.web or args.both or not (args.gui or args.web or args.both)
+    
+    print(f"Starting in {'GUI' if launch_gui else ''}{' and ' if launch_gui and launch_web else ''}{'Web' if launch_web else ''} mode")
+    print(f"Using MQTT broker: {app.config['MQTT_BROKER_URL']}")
+    
+    # Start publishing alarm state
+    threading.Timer(2.0, publish_alarm_state_loop).start()
+    
+    # Launch the interfaces in the correct order
+    if launch_gui:
+        # Launch the interface in fullscreen
+        if launch_interface_fullscreen():
+            print("GUI interface launched successfully")
+        else:
+            print("Failed to launch GUI interface")
+    
+    if launch_web:
+        # Start Flask server
+        print("Starting web server...")
+        app.run(debug=False, host='0.0.0.0')  # Set debug to False in production
+
+# Add this route to app.py
+@app.route('/test_hardware', methods=['POST'])
+def test_hardware():
+    """Test hardware components"""
+    try:
+        component = request.json.get('component', '')
+        action = request.json.get('action', '')
+        
+        if component == 'led':
+            # Try to control LED
+            try:
+                from interface_1 import led
+                if action == 'on':
+                    led.on()
+                    return jsonify({"status": "success", "message": "LED turned on"})
+                else:
+                    led.off()
+                    return jsonify({"status": "success", "message": "LED turned off"})
+            except Exception as e:
+                return jsonify({"status": "error", "message": f"LED control failed: {str(e)}"})
+        
+        elif component == 'servo':
+            # Try to move servo
+            try:
+                from interface_1 import servo
+                if action == 'sweep':
+                    # Start a thread to move the servo since it blocks
+                    def move_servo_test():
+                        for angle in range(0, 181, 5):  # Faster movement
+                            servo.angle = angle
+                            time.sleep(0.01)
+                        for angle in range(180, -1, -5):
+                            servo.angle = angle
+                            time.sleep(0.01)
+                    
+                    threading.Thread(target=move_servo_test).start()
+                    return jsonify({"status": "success", "message": "Servo moving back and forth"})
+                    
+                elif action == 'center':
+                    # Move servo to center position (90 degrees)
+                    servo.angle = 90
+                    return jsonify({"status": "success", "message": "Servo centered at 90°"})
+                    
+            except Exception as e:
+                return jsonify({"status": "error", "message": f"Servo control failed: {str(e)}"})
+        
+        elif component == 'buzzer':
+            # Try to control buzzer
+            try:
+                from interface_1 import buzzer
+                if action == 'on':
+                    buzzer.on()
+                    # Turn off after 1 second
+                    threading.Timer(1.0, lambda: buzzer.off()).start()
+                    return jsonify({"status": "success", "message": "Buzzer beeped"})
+                else:
+                    buzzer.off()
+                    return jsonify({"status": "success", "message": "Buzzer turned off"})
+            except Exception as e:
+                return jsonify({"status": "error", "message": f"Buzzer control failed: {str(e)}"})
+                
+        return jsonify({"status": "error", "message": "Invalid component or action"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+

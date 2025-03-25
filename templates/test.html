@@ -1,254 +1,231 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebSocket Connection Test</title>
+    <title>WebSocket Test</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
+            background-color: #121212;
+            color: #FFFFFF;
         }
         
-        #log {
-            height: 200px;
-            border: 1px solid #ccc;
-            padding: 10px;
-            overflow-y: auto;
-            font-family: monospace;
+        h1, h2 {
+            color: #BB86FC;
+        }
+        
+        .panel {
+            background-color: #1E1E1E;
+            border-radius: 8px;
+            padding: 15px;
             margin-bottom: 20px;
         }
         
-        .success { color: green; font-weight: bold; }
-        .error { color: red; font-weight: bold; }
-        .info { color: blue; }
-        
         button {
-            padding: 10px;
-            margin-right: 10px;
-            margin-bottom: 10px;
-            background-color: #4CAF50;
-            color: white;
+            padding: 8px 15px;
+            background-color: #BB86FC;
+            color: #121212;
             border: none;
             border-radius: 4px;
             cursor: pointer;
+            font-weight: bold;
+            margin: 5px;
         }
         
         button:hover {
-            background-color: #45a049;
+            background-color: #9965CC;
+        }
+        
+        pre {
+            background-color: #272727;
+            padding: 10px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+        
+        .nav-links {
+            margin: 20px 0;
+        }
+        
+        .nav-links a {
+            color: #BB86FC;
+            margin-right: 15px;
+            text-decoration: none;
+        }
+        
+        .nav-links a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
 <body>
-    <h1>WebSocket Connection Test</h1>
+    <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/hardware_test_page">Hardware Test</a>
+    </div>
+
+    <h1>WebSocket Test Page</h1>
     
-    <div id="log"></div>
-    
-    <div>
-        <button onclick="testDirectWebSocket()">Test Direct WebSocket</button>
-        <button onclick="testMQTTWebSocket()">Test MQTT WebSocket</button>
-        <button onclick="checkPorts()">Check Ports</button>
+    <div class="panel">
+        <h2>MQTT WebSocket Connection</h2>
+        <div>
+            <button id="connectBtn">Connect to MQTT</button>
+            <button id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+        <h3>Connection Status:</h3>
+        <pre id="connectionStatus">Not connected</pre>
+        
+        <h3>Received Messages:</h3>
+        <pre id="receivedMessages">No messages received</pre>
     </div>
     
-    <div id="details">
-        <h2>Connection Details:</h2>
-        <pre id="details-content"></pre>
+    <div class="panel">
+        <h2>Send Test Message</h2>
+        <div>
+            <label for="topicInput">Topic:</label>
+            <input type="text" id="topicInput" value="alarm/test">
+            <label for="messageInput">Message:</label>
+            <input type="text" id="messageInput" value="Test message">
+            <button id="sendBtn" disabled>Send</button>
+        </div>
     </div>
     
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" type="text/javascript"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <script>
-        const log = (message, type = 'info') => {
-            const logElement = document.getElementById('log');
-            const timestamp = new Date().toLocaleTimeString();
-            const entry = document.createElement('div');
-            entry.className = type;
-            entry.textContent = `[${timestamp}] ${message}`;
-            logElement.appendChild(entry);
-            logElement.scrollTop = logElement.scrollHeight;
-        };
+        let client = null;
+        let messageCount = 0;
         
-        const updateDetails = (details) => {
-            const detailsContent = document.getElementById('details-content');
-            detailsContent.textContent = JSON.stringify(details, null, 2);
-        };
+        document.getElementById('connectBtn').addEventListener('click', connect);
+        document.getElementById('disconnectBtn').addEventListener('click', disconnect);
+        document.getElementById('sendBtn').addEventListener('click', sendMessage);
         
-        // Test direct WebSocket connection (no MQTT)
-        const testDirectWebSocket = () => {
-            log('Testing direct WebSocket connection...');
+        function connect() {
+            const statusElem = document.getElementById('connectionStatus');
+            statusElem.textContent = "Connecting...";
             
-            const hostname = window.location.hostname;
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-            const wsUrl = `${wsProtocol}://${hostname}:9001`;
-            
-            try {
-                log(`Connecting to ${wsUrl}`);
-                const socket = new WebSocket(wsUrl);
-                
-                socket.onopen = () => {
-                    log('WebSocket connection established successfully!', 'success');
-                    updateDetails({
-                        status: 'connected',
-                        url: wsUrl
+            // Get server info
+            fetch('/mqtt')
+                .then(response => response.json())
+                .then(config => {
+                    const clientId = "webclient_" + Math.random().toString(16).substr(2, 8);
+                    client = new Paho.MQTT.Client(
+                        config.broker_url,
+                        config.broker_websocket_port,
+                        clientId
+                    );
+                    
+                    // Set callbacks
+                    client.onConnectionLost = onConnectionLost;
+                    client.onMessageArrived = onMessageArrived;
+                    
+                    // Connect to broker
+                    client.connect({
+                        onSuccess: onConnect,
+                        onFailure: onFailure,
+                        useSSL: config.use_ssl,
+                        keepAliveInterval: 30
                     });
-                };
-                
-                socket.onmessage = (event) => {
-                    log(`Received message: ${event.data}`, 'success');
-                };
-                
-                socket.onerror = (error) => {
-                    log(`WebSocket error: ${error}`, 'error');
-                    updateDetails({
-                        status: 'error',
-                        url: wsUrl,
-                        error: error.toString()
-                    });
-                };
-                
-                socket.onclose = (event) => {
-                    if (event.wasClean) {
-                        log(`WebSocket closed cleanly, code=${event.code}, reason=${event.reason}`, 'info');
-                    } else {
-                        log('WebSocket connection died', 'error');
-                    }
-                };
-                
-                // Close after 5 seconds
-                setTimeout(() => {
-                    if (socket.readyState === WebSocket.OPEN) {
-                        log('Closing WebSocket after 5 seconds');
-                        socket.close();
-                    }
-                }, 5000);
-                
-            } catch (error) {
-                log(`Error creating WebSocket: ${error.message}`, 'error');
-                updateDetails({
-                    status: 'exception',
-                    url: wsUrl,
-                    error: error.toString()
-                });
-            }
-        };
-        
-        // Test MQTT over WebSocket
-        const testMQTTWebSocket = () => {
-            log('Testing MQTT over WebSocket...');
-            
-            try {
-                const hostname = window.location.hostname;
-                const clientId = "testclient_" + Math.random().toString(16).substring(2, 10);
-                log(`Connecting to MQTT broker at ${hostname}:9001 with client ID ${clientId}`);
-                
-                const client = new Paho.MQTT.Client(hostname, 9001, clientId);
-                
-                client.onConnectionLost = (responseObject) => {
-                    if (responseObject.errorCode !== 0) {
-                        log(`Connection lost: ${responseObject.errorMessage}`, 'error');
-                    }
-                };
-                
-                client.onMessageArrived = (message) => {
-                    log(`Message received on ${message.destinationName}: ${message.payloadString}`, 'success');
-                };
-                
-                const connectOptions = {
-                    onSuccess: () => {
-                        log('Connected to MQTT broker successfully!', 'success');
-                        
-                        // Subscribe to a test topic
-                        log('Subscribing to test/topic');
-                        client.subscribe('test/topic');
-                        
-                        // Publish a test message
-                        log('Publishing test message');
-                        const message = new Paho.MQTT.Message("Hello from WebSocket test");
-                        message.destinationName = "test/topic";
-                        client.send(message);
-                        
-                        // Disconnect after 5 seconds
-                        setTimeout(() => {
-                            log('Disconnecting from MQTT broker');
-                            client.disconnect();
-                        }, 5000);
-                    },
-                    onFailure: (error) => {
-                        log(`Failed to connect to MQTT broker: ${error.errorMessage}`, 'error');
-                        updateDetails({
-                            status: 'error',
-                            broker: hostname,
-                            port: 9001,
-                            clientId: clientId,
-                            error: error.errorMessage
-                        });
-                    },
-                    timeout: 10,
-                    useSSL: window.location.protocol === 'https:'
-                };
-                
-                client.connect(connectOptions);
-                
-                updateDetails({
-                    broker: hostname,
-                    port: 9001,
-                    clientId: clientId,
-                    useSSL: window.location.protocol === 'https:'
-                });
-                
-            } catch (error) {
-                log(`Error creating MQTT client: ${error.message}`, 'error');
-                updateDetails({
-                    status: 'exception',
-                    error: error.toString()
-                });
-            }
-        };
-        
-        // Check if ports are open using fetch with timeout
-        const checkPorts = () => {
-            const hostname = window.location.hostname;
-            const ports = [1883, 9001];
-            
-            ports.forEach(port => {
-                const protocol = window.location.protocol;
-                // We can't directly check TCP ports with fetch, but we can see if there's any response
-                // This is a best-effort approach
-                
-                log(`Checking port ${port}...`);
-                
-                const url = `${protocol}//${hostname}:${port}`;
-                
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 3000);
-                
-                fetch(url, { 
-                    method: 'GET',
-                    mode: 'no-cors',
-                    signal: controller.signal
-                })
-                .then(response => {
-                    log(`Port ${port} responded (might be open)`, 'success');
                 })
                 .catch(error => {
-                    if (error.name === 'AbortError') {
-                        log(`Port ${port} timed out (might be closed or filtered)`, 'error');
-                    } else {
-                        // If we get any response (even an error), the port is likely open
-                        log(`Port ${port} returned an error (might be open)`, 'info');
-                    }
-                })
-                .finally(() => {
-                    clearTimeout(timeoutId);
+                    statusElem.textContent = "Error getting MQTT config: " + error.message;
                 });
-            });
-        };
+        }
         
-        // Show initial environment info
-        updateDetails({
-            hostname: window.location.hostname,
-            protocol: window.location.protocol,
-            userAgent: navigator.userAgent
-        });
+        function onConnect() {
+            const statusElem = document.getElementById('connectionStatus');
+            statusElem.textContent = "Connected to MQTT broker";
+            
+            // Enable/disable buttons
+            document.getElementById('connectBtn').disabled = true;
+            document.getElementById('disconnectBtn').disabled = false;
+            document.getElementById('sendBtn').disabled = false;
+            
+            // Subscribe to alarm topics
+            client.subscribe("alarm/#");
+            
+            // Publish a message to show we connected
+            client.send("alarm/test", JSON.stringify({
+                client: "Web Test Client",
+                connected: true,
+                timestamp: new Date().toISOString()
+            }));
+        }
+        
+        function onFailure(error) {
+            const statusElem = document.getElementById('connectionStatus');
+            statusElem.textContent = "Failed to connect: " + error.errorMessage;
+        }
+        
+        function disconnect() {
+            if (client && client.isConnected()) {
+                client.disconnect();
+                const statusElem = document.getElementById('connectionStatus');
+                statusElem.textContent = "Disconnected";
+                
+                // Enable/disable buttons
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+                document.getElementById('sendBtn').disabled = true;
+            }
+        }
+        
+        function onConnectionLost(responseObject) {
+            const statusElem = document.getElementById('connectionStatus');
+            if (responseObject.errorCode !== 0) {
+                statusElem.textContent = "Connection lost: " + responseObject.errorMessage;
+            } else {
+                statusElem.textContent = "Disconnected";
+            }
+            
+            // Enable/disable buttons
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+            document.getElementById('sendBtn').disabled = true;
+        }
+        
+        function onMessageArrived(message) {
+            messageCount++;
+            const messagesElem = document.getElementById('receivedMessages');
+            let messageText = message.payloadString;
+            
+            // Try to pretty-print JSON
+            try {
+                const jsonObj = JSON.parse(messageText);
+                messageText = JSON.stringify(jsonObj, null, 2);
+            } catch (e) {
+                // Not JSON, keep as is
+            }
+            
+            // Display only the last 10 messages to avoid overwhelming the UI
+            messagesElem.textContent = 
+                `Message #${messageCount} on ${message.destinationName}:\n${messageText}\n\n` +
+                messagesElem.textContent.split('\n\n').slice(0, 9).join('\n\n');
+        }
+        
+        function sendMessage() {
+            if (!client || !client.isConnected()) {
+                alert("Not connected to MQTT");
+                return;
+            }
+            
+            const topic = document.getElementById('topicInput').value;
+            const message = document.getElementById('messageInput').value;
+            
+            if (!topic || !message) {
+                alert("Please enter both topic and message");
+                return;
+            }
+            
+            client.send(topic, message);
+            
+            // Add message to display
+            const messagesElem = document.getElementById('receivedMessages');
+            messagesElem.textContent = 
+                `SENT to ${topic}:\n${message}\n\n` + messagesElem.textContent;
+        }
     </script>
 </body>
 </html>

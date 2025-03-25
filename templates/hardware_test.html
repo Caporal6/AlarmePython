@@ -61,6 +61,7 @@
             background-color: #272727;
             border-radius: 4px;
             min-height: 40px;
+            white-space: pre-line;
         }
         
         .success {
@@ -107,7 +108,8 @@
 <body>
     <div class="nav-links">
         <a href="/">Home</a>
-        <a href="/mqtt_test">MQTT Test</a>
+        <a href="/hardware_test_page">Hardware Test</a>
+        <a href="/debug/sensor">Debug Sensor</a>
     </div>
 
     <h1>Hardware Test Interface</h1>
@@ -142,6 +144,11 @@
         <div class="status-box" id="testResult">
             Test results will appear here...
         </div>
+        
+        <div style="margin-top: 15px;">
+            <button onclick="checkEndpoints()">Check API Endpoints</button>
+            <button onclick="testPostMethod()" style="margin-left: 10px;">Test POST Method</button>
+        </div>
     </div>
     
     <div class="panel">
@@ -173,12 +180,31 @@
     </div>
     
     <script>
+        // More robust component testing with retries
         function testComponent(component, action) {
             const resultElement = document.getElementById('testResult');
             resultElement.textContent = `Testing ${component} (${action})...`;
             resultElement.className = '';
             
-            fetch('/test_hardware_fixed', {
+            // Use fetch with timeout and retry
+            const fetchWithTimeout = (url, options, timeout = 5000) => {
+                return Promise.race([
+                    fetch(url, options),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Request timed out')), timeout)
+                    )
+                ]);
+            };
+            
+            const fetchWithRetry = (url, options, retries = 3, timeout = 5000) => {
+                return fetchWithTimeout(url, options, timeout)
+                    .catch(error => {
+                        if (retries === 0) throw error;
+                        return fetchWithRetry(url, options, retries - 1, timeout);
+                    });
+            };
+            
+            fetchWithRetry('/test_hardware_fixed', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -189,32 +215,60 @@
                 })
             })
             .then(response => {
-                // First check if the response is OK before parsing JSON
                 if (!response.ok) {
-                    throw new Error(`HTTP error! Status: ${response.status}`);
+                    throw new Error(`HTTP Error! Status: ${response.status}`);
                 }
                 return response.json();
             })
             .then(data => {
-                if (data.status === 'success') {
-                    resultElement.textContent = data.message;
-                    resultElement.className = 'success';
-                } else {
-                    resultElement.textContent = data.message;
-                    resultElement.className = 'error';
-                }
+                resultElement.textContent = data.message;
+                resultElement.className = data.status === 'success' ? 'success' : 'error';
             })
             .catch(error => {
                 resultElement.textContent = `Error: ${error.message}`;
                 resultElement.className = 'error';
                 console.error("Hardware test error:", error);
+                
+                // Fallback to test_hardware endpoint if test_hardware_fixed fails
+                if (error.message.includes('404') || error.message.includes('405')) {
+                    resultElement.textContent = `Trying alternative endpoint...`;
+                    
+                    fetch('/test_hardware', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            component: component,
+                            action: action
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        resultElement.textContent = data.message;
+                        resultElement.className = data.status === 'success' ? 'success' : 'error';
+                    })
+                    .catch(fallbackError => {
+                        resultElement.textContent = `All attempts failed: ${error.message}, Fallback: ${fallbackError.message}`;
+                        resultElement.className = 'error';
+                    });
+                }
             });
         }
         
         function refreshSensorData() {
+            // Show loading state
+            document.getElementById('hardware-status').textContent = "Loading...";
+            
             fetch('/sensor_data')
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP Error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
+                    console.log("Sensor data:", data);
                     document.getElementById('hardware-status').textContent = 
                         data.hardware_available ? "Available" : "Not Available";
                         
@@ -239,15 +293,90 @@
                                 data.movement_detected ? "Movement Detected" : "No Movement";
                         }
                     } else {
-                        document.getElementById('temperature').textContent = "Hardware unavailable";
-                        document.getElementById('humidity').textContent = "Hardware unavailable";
-                        document.getElementById('distance').textContent = "Hardware unavailable";
-                        document.getElementById('movement').textContent = "Hardware unavailable";
+                        // Show simulated data if hardware is not available
+                        document.getElementById('temperature').textContent = "22.5°C (simulated)";
+                        document.getElementById('humidity').textContent = "45.0% (simulated)";
+                        document.getElementById('distance').textContent = "50.0 cm (simulated)";
+                        document.getElementById('movement').textContent = "No Movement (simulated)";
                     }
                 })
                 .catch(error => {
                     console.error("Error fetching sensor data:", error);
+                    document.getElementById('hardware-status').textContent = "Error: " + error.message;
+                    
+                    // Show fallback interface
+                    document.getElementById('temperature').textContent = "Error loading data";
+                    document.getElementById('humidity').textContent = "Error loading data";
+                    document.getElementById('distance').textContent = "Error loading data";
+                    document.getElementById('movement').textContent = "Error loading data";
                 });
+        }
+        
+        // Add a utility function to check if routes are accessible
+        function checkEndpoints() {
+            const endpoints = [
+                '/hardware_status',
+                '/sensor_data',
+                '/test_hardware_fixed'
+            ];
+            
+            const resultElement = document.getElementById('testResult');
+            resultElement.textContent = 'Checking API endpoints...';
+            
+            // Check each endpoint
+            const checkPromises = endpoints.map(endpoint => 
+                fetch(endpoint)
+                    .then(response => ({
+                        endpoint,
+                        status: response.status,
+                        ok: response.ok
+                    }))
+                    .catch(error => ({
+                        endpoint,
+                        error: error.message,
+                        ok: false
+                    }))
+            );
+            
+            // Display the results when all checks are done
+            Promise.all(checkPromises)
+                .then(results => {
+                    let message = 'API Endpoint Status:\n';
+                    let allOk = true;
+                    
+                    results.forEach(result => {
+                        message += `${result.endpoint}: ${result.ok ? '✓' : '✗'} ${result.status || result.error}\n`;
+                        if (!result.ok) allOk = false;
+                    });
+                    
+                    resultElement.textContent = message;
+                    resultElement.className = allOk ? 'success' : 'error';
+                });
+        }
+        
+        // Test that POST requests work correctly
+        function testPostMethod() {
+            const resultElement = document.getElementById('testResult');
+            resultElement.textContent = 'Testing POST method...';
+            resultElement.className = '';
+            
+            fetch('/test_hardware_fixed', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ test: 'post-method' })
+            })
+            .then(response => {
+                resultElement.textContent = `POST test: ${response.status} ${response.statusText}`;
+                resultElement.className = response.ok ? 'success' : 'error';
+                return response.text();
+            })
+            .then(text => {
+                console.log("POST test response:", text);
+            })
+            .catch(error => {
+                resultElement.textContent = `POST test error: ${error.message}`;
+                resultElement.className = 'error';
+            });
         }
         
         // Refresh sensor data when page loads

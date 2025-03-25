@@ -3,12 +3,26 @@
 
 # Check if virtual environment exists
 if [ ! -d "venv" ]; then
-    echo "Virtual environment not found. Please run setup_venv.sh first."
-    exit 1
+    echo "Virtual environment not found. Creating it now..."
+    python -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+else
+    # Activate the virtual environment
+    source venv/bin/activate
 fi
 
-# Activate the virtual environment
-source venv/bin/activate
-
-# Run the application with arguments passed to this script
-python app.py "$@"
+# Check if a specific mode is requested
+if [[ "$*" == *"--web"* ]]; then
+    # Web mode only
+    echo "Starting in web mode only"
+    python app.py --web "$@"
+elif [[ "$*" == *"--gui"* ]]; then
+    # GUI mode only
+    echo "Starting in GUI mode only"
+    python app.py --gui "$@"
+else
+    # Default: both modes
+    echo "Starting in both web and GUI modes"
+    python app.py --both "$@"
+fi

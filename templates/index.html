@@ -29,6 +29,37 @@
         .diagnostics-links a:hover {
             background-color: #9965CC;
         }
+
+        .hardware-controls {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #1E1E1E;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .hardware-links {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .hardware-links a {
+            display: inline-block;
+            padding: 8px 15px;
+            background-color: #BB86FC;
+            color: #121212;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        
+        .hardware-links a:hover {
+            background-color: #9965FC;
+        }
     </style>
 </head>
 <body>
@@ -37,10 +68,14 @@
             <h1>Alarm Controller</h1>
         </header>
         
-        <div class="diagnostics-links">
-            <a href="{{ url_for('mqtt_test') }}">MQTT WebSocket Test</a>
-            <a href="{{ url_for('websocket_test') }}">WebSocket Diagnostics</a>
-            <a href="{{ url_for('hardware_test_page') }}">Hardware Test Interface</a>
+        <!-- Hardware controls section -->
+        <div class="hardware-controls">
+            <h2>Hardware Controls</h2>
+            <div class="hardware-links">
+                <a href="/hardware_test_page">Hardware Test Interface</a>
+                <a href="/mqtt_test">MQTT WebSocket Test</a>
+                <a href="/websocket_test">WebSocket Diagnostics</a>
+            </div>
         </div>
         
         <div class="status-panel">
