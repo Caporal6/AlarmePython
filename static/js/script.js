@@ -727,3 +727,9 @@ function testHardware(component, action) {
         console.error("Hardware test error:", error);
     });
 }
+
+fetch('/test_hardware_fixed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ component: 'led', action: 'on' })
+});

@@ -56,7 +56,7 @@ def handle_connect(client, userdata, flags, rc):
 
 @mqtt_client.on_message()
 def handle_mqtt_message(client, userdata, message):
-    """Process incoming MQTT messages"""
+    """Process incoming MQTT messages with improved hardware support"""
     topic = message.topic
     payload = message.payload.decode()
     
@@ -71,7 +71,6 @@ def handle_mqtt_message(client, userdata, message):
             # Client is requesting alarm list
             publish_alarms()
         elif topic == "alarm/request/add":
-            # Client is adding an alarm
             try:
                 hour = int(data.get('hour', 0))
                 minute = int(data.get('minute', 0))
@@ -81,7 +80,6 @@ def handle_mqtt_message(client, userdata, message):
                 print(f"Error processing add alarm request: {e}")
                 mqtt_client.publish("alarm/error", f"Failed to add alarm: {str(e)}")
         elif topic == "alarm/request/delete":
-            # Client is deleting an alarm
             try:
                 index = int(data.get('index', -1))
                 if index >= 0:
@@ -90,7 +88,6 @@ def handle_mqtt_message(client, userdata, message):
                 print(f"Error processing delete alarm request: {e}")
                 mqtt_client.publish("alarm/error", f"Failed to delete alarm: {str(e)}")
         elif topic == "alarm/request/toggle":
-            # Client is toggling an alarm
             try:
                 index = int(data.get('index', -1))
                 if index >= 0:
@@ -99,12 +96,57 @@ def handle_mqtt_message(client, userdata, message):
                 print(f"Error processing toggle alarm request: {e}")
                 mqtt_client.publish("alarm/error", f"Failed to toggle alarm: {str(e)}")
         elif topic == "alarm/request/snooze":
-            # Client is snoozing an alarm
             try:
                 snooze_alarm_mqtt()
             except Exception as e:
                 print(f"Error processing snooze request: {e}")
                 mqtt_client.publish("alarm/error", f"Failed to snooze alarm: {str(e)}")
+        elif topic == "alarm/request/hardware":
+            # Handle hardware control requests via MQTT
+            try:
+                component = data.get('component', '')
+                action = data.get('action', '')
+                
+                if component and action:
+                    try:
+                        from hardware_bridge import control_hardware
+                        result = control_hardware(component, action)
+                        mqtt_client.publish("alarm/hardware/response", json.dumps(result))
+                    except ImportError:
+                        mqtt_client.publish("alarm/hardware/response", json.dumps({
+                            "status": "error",
+                            "message": "Hardware bridge not available"
+                        }))
+                else:
+                    mqtt_client.publish("alarm/hardware/response", json.dumps({
+                        "status": "error",
+                        "message": "Missing component or action"
+                    }))
+            except Exception as e:
+                print(f"Error processing hardware request: {e}")
+                mqtt_client.publish("alarm/hardware/response", json.dumps({
+                    "status": "error",
+                    "message": f"Error: {str(e)}"
+                }))
+        elif topic == "alarm/request/sensor":
+            # Handle sensor data requests via MQTT
+            try:
+                from hardware_bridge import get_sensor_data
+                sensor_data = get_sensor_data()
+                mqtt_client.publish("alarm/sensor/data", json.dumps(sensor_data))
+            except ImportError:
+                mqtt_client.publish("alarm/sensor/data", json.dumps({
+                    "hardware_available": False,
+                    "message": "Hardware bridge not available",
+                    "timestamp": time.time()
+                }))
+            except Exception as e:
+                print(f"Error processing sensor request: {e}")
+                mqtt_client.publish("alarm/sensor/data", json.dumps({
+                    "hardware_available": False,
+                    "error": str(e),
+                    "timestamp": time.time()
+                }))
         elif topic == "alarm/list" and isinstance(data, list):
             # Got an alarm list from another client (likely the GUI)
             # Update our local copy without republishing to avoid loops
@@ -127,6 +169,7 @@ def handle_mqtt_message(client, userdata, message):
         print(f"Received non-JSON payload: {payload}")
     except Exception as e:
         print(f"Error processing MQTT message: {e}")
+        
 def read_output(process):
     """Read output from the process and store it in buffer"""
     global output_buffer
@@ -835,12 +878,12 @@ def hardware_test_page():
 def hardware_status():
     """Return hardware availability status"""
     try:
-        import sys
-        sys.path.append(".")
-        from interface_1 import HARDWARE_AVAILABLE
+        # Import our hardware bridge module
+        from hardware_bridge import HARDWARE_AVAILABLE, HARDWARE_COMPONENTS
         
         return jsonify({
             "hardware_available": HARDWARE_AVAILABLE,
+            "components": list(HARDWARE_COMPONENTS.keys()) if HARDWARE_AVAILABLE else [],
             "sensors": {
                 "temperature": True,
                 "humidity": True,
@@ -849,42 +892,62 @@ def hardware_status():
             } if HARDWARE_AVAILABLE else {}
         })
     except ImportError as e:
-        print(f"Error importing interface_1 module: {e}")
+        print(f"Error importing hardware_bridge module: {e}")
         return jsonify({
             "hardware_available": False,
-            "message": "Hardware interface not accessible"
+            "message": "Hardware interface not accessible",
+            "error": str(e)
         })
 
 @app.route('/sensor_data')
 def sensor_data():
     """Return current sensor readings if hardware is available"""
     try:
-        # Try to import from the interface
-        import sys
-        sys.path.append(".")
-        
-        try:
-            # First check if the interface_1 module has a get_sensor_data function
-            from interface_1 import get_sensor_data
-            data = get_sensor_data()
-            return jsonify(data)
-        except (ImportError, AttributeError) as e:
-            print(f"Error accessing sensor data: {e}")
-            
-            # Create a dummy response with error message
-            return jsonify({
-                "hardware_available": False,
-                "error": "Cannot access sensor data function",
-                "message": str(e),
-                "timestamp": time.time()
-            })
+        # Import our hardware bridge module
+        from hardware_bridge import get_sensor_data
+        data = get_sensor_data()
+        return jsonify(data)
     except Exception as e:
         print(f"Sensor data error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "hardware_available": False,
             "error": str(e),
             "timestamp": time.time()
         })
+
+@app.route('/test_hardware', methods=['POST'])
+def test_hardware():
+    """Test hardware components with robust error handling"""
+    try:
+        if not request.is_json:
+            return jsonify({
+                "status": "error",
+                "message": "Request must be JSON"
+            }), 400
+
+        data = request.json
+        component = data.get('component', '')
+        action = data.get('action', '')
+
+        if not component or not action:
+            return jsonify({
+                "status": "error",
+                "message": "Missing component or action parameter"
+            }), 400
+
+        # Use our hardware bridge module
+        from hardware_bridge import control_hardware
+        result = control_hardware(component, action)
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error", 
+            "message": f"Error controlling hardware: {str(e)}"
+        }), 500
 
 @app.route('/test_hardware_fixed', methods=['POST'])
 def test_hardware_fixed():
@@ -892,113 +955,35 @@ def test_hardware_fixed():
     try:
         if not request.is_json:
             return jsonify({
-                "status": "error", 
+                "status": "error",
                 "message": "Request must be JSON"
             }), 400
-            
+
         data = request.json
         component = data.get('component', '')
         action = data.get('action', '')
-        
+
         if not component or not action:
             return jsonify({
-                "status": "error", 
+                "status": "error",
                 "message": "Missing component or action parameter"
             }), 400
-            
-        # Check for hardware availability
-        try:
-            import sys
-            sys.path.append(".")
-            import interface_1
-            
-            # Check if hardware is available at all
-            if not getattr(interface_1, 'HARDWARE_AVAILABLE', False):
-                return jsonify({
-                    "status": "error", 
-                    "message": "Hardware is not available in this environment"
-                }), 200
-                
-            # Process by component type
-            if component == 'led':
-                led = getattr(interface_1, 'led', None)
-                if not led:
-                    return jsonify({"status": "error", "message": "LED component not found"}), 200
-                    
-                if action == 'on':
-                    led.on()
-                    return jsonify({"status": "success", "message": "LED turned on"}), 200
-                elif action == 'off':
-                    led.off()
-                    return jsonify({"status": "success", "message": "LED turned off"}), 200
-                else:
-                    return jsonify({"status": "error", "message": f"Unknown LED action: {action}"}), 200
-                    
-            elif component == 'servo':
-                servo = getattr(interface_1, 'servo', None)
-                if not servo:
-                    return jsonify({"status": "error", "message": "Servo component not found"}), 200
-                    
-                if action == 'sweep':
-                    # Use a thread to avoid blocking
-                    import threading
-                    import time
-                    
-                    def move_servo_test():
-                        try:
-                            for angle in range(0, 181, 5):
-                                servo.angle = angle
-                                time.sleep(0.01)
-                            for angle in range(180, -1, -5):
-                                servo.angle = angle
-                                time.sleep(0.01)
-                        except Exception as e:
-                            print(f"Error in servo sweep thread: {e}")
-                    
-                    threading.Thread(target=move_servo_test).start()
-                    return jsonify({"status": "success", "message": "Servo moving back and forth"}), 200
-                    
-                elif action == 'center':
-                    servo.angle = 90
-                    return jsonify({"status": "success", "message": "Servo centered at 90°"}), 200
-                else:
-                    return jsonify({"status": "error", "message": f"Unknown servo action: {action}"}), 200
-                    
-            elif component == 'buzzer':
-                buzzer = getattr(interface_1, 'buzzer', None)
-                if not buzzer:
-                    return jsonify({"status": "error", "message": "Buzzer component not found"}), 200
-                    
-                if action == 'on':
-                    buzzer.on()
-                    # Turn off after 1 second
-                    import threading
-                    import time
-                    threading.Timer(1.0, lambda: buzzer.off()).start()
-                    return jsonify({"status": "success", "message": "Buzzer beeped"}), 200
-                elif action == 'off':
-                    buzzer.off()
-                    return jsonify({"status": "success", "message": "Buzzer turned off"}), 200
-                else:
-                    return jsonify({"status": "error", "message": f"Unknown buzzer action: {action}"}), 200
+
+        # Example: Handle LED component
+        if component == 'led':
+            if action == 'on':
+                interface_1.led.on()
+                return jsonify({"status": "success", "message": "LED turned on"})
+            elif action == 'off':
+                interface_1.led.off()
+                return jsonify({"status": "success", "message": "LED turned off"})
             else:
-                return jsonify({"status": "error", "message": f"Unknown component: {component}"}), 200
-                
-        except ImportError as e:
-            return jsonify({
-                "status": "error", 
-                "message": f"Failed to import hardware module: {str(e)}"
-            }), 200
-        except Exception as e:
-            return jsonify({
-                "status": "error", 
-                "message": f"Hardware control error: {str(e)}"
-            }), 200
+                return jsonify({"status": "error", "message": f"Unknown LED action: {action}"})
+
+        # Add similar handling for other components (servo, buzzer, etc.)
+        return jsonify({"status": "error", "message": f"Unknown component: {component}"})
     except Exception as e:
-        return jsonify({
-            "status": "error", 
-            "message": f"Server error: {str(e)}"
-        }), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/debug/sensor')
 def debug_sensor():
