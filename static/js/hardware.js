@@ -116,49 +116,37 @@ function testHardwareComponent(component, action) {
         testResult.className = '';
     }
     
-    // Try MQTT first if available
-    if (mqttHardwareClient && mqttHardwareClient.isConnected()) {
-        console.log("Using MQTT for hardware test");
-        
-        // Set up a one-time response handler
-        const responseHandler = function(message) {
-            try {
-                const response = JSON.parse(message.payloadString);
-                
-                if (testResult) {
-                    testResult.textContent = response.message;
-                    testResult.className = response.status === 'success' ? 'success' : 'error';
-                }
-                
-                // Unsubscribe after receiving the response
-                mqttHardwareClient.unsubscribe("alarm/hardware/response");
-            } catch (e) {
-                console.error("Error handling hardware response:", e);
-                if (testResult) {
-                    testResult.textContent = "Error processing response";
-                    testResult.className = 'error';
-                }
+    // Try multiple endpoints in order, with fallback mechanism
+    tryHardwareEndpoints(component, action, testResult);
+}
+
+// This function tries multiple endpoints in sequence until one works
+function tryHardwareEndpoints(component, action, testResult) {
+    // We'll try these endpoints in order
+    const endpoints = [
+        '/test_hardware',
+        '/test_hardware_fixed',
+        '/simple_hardware_test'
+    ];
+    
+    // Start with the first endpoint
+    tryNextEndpoint(0);
+    
+    function tryNextEndpoint(index) {
+        // If we've tried all endpoints, show failure
+        if (index >= endpoints.length) {
+            if (testResult) {
+                testResult.textContent = "All hardware test endpoints failed";
+                testResult.className = 'error';
             }
-        };
+            console.error("All hardware test endpoints failed");
+            return;
+        }
         
-        // Subscribe to response topic
-        mqttHardwareClient.subscribe("alarm/hardware/response");
-        mqttHardwareClient.onMessageArrived = responseHandler;
+        const endpoint = endpoints[index];
+        console.log(`Trying hardware endpoint: ${endpoint}`);
         
-        // Send the request
-        const payload = JSON.stringify({
-            component: component,
-            action: action
-        });
-        const message = new Paho.MQTT.Message(payload);
-        message.destinationName = 'alarm/request/hardware';
-        mqttHardwareClient.send(message);
-    } 
-    // Fall back to HTTP API
-    else {
-        console.log("Using HTTP for hardware test");
-        
-        fetch('/test_hardware', {
+        fetch(endpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -168,47 +156,69 @@ function testHardwareComponent(component, action) {
                 action: action
             })
         })
-        .then(response => response.json())
+        .then(response => {
+            // First check if response is ok
+            if (!response.ok) {
+                console.log(`Endpoint ${endpoint} returned ${response.status} ${response.statusText}`);
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
+            console.log(`Endpoint ${endpoint} success:`, data);
             if (testResult) {
-                testResult.textContent = data.message;
+                testResult.textContent = data.message || `${component} tested successfully`;
                 testResult.className = data.status === 'success' ? 'success' : 'error';
+                
+                // Add simulated notice if needed
+                if (data.simulated) {
+                    testResult.textContent += " (simulated)";
+                }
             }
         })
         .catch(error => {
-            console.error("Error testing hardware:", error);
-            if (testResult) {
-                testResult.textContent = `Error: ${error.message}`;
-                testResult.className = 'error';
-            }
-            
-            // Try alternative endpoint as fallback
-            fetch('/test_hardware_fixed', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    component: component,
-                    action: action
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (testResult) {
-                    testResult.textContent = data.message + " (fallback)";
-                    testResult.className = data.status === 'success' ? 'success' : 'error';
-                }
-            })
-            .catch(fallbackError => {
-                console.error("Fallback error:", fallbackError);
-                if (testResult) {
-                    testResult.textContent = `All attempts failed`;
-                    testResult.className = 'error';
-                }
-            });
+            console.error(`Endpoint ${endpoint} failed:`, error);
+            // Try the next endpoint
+            tryNextEndpoint(index + 1);
         });
     }
+}
+
+// Function to check if the endpoint accepts POST requests
+function testPostMethod() {
+    const resultElement = document.getElementById('testResult');
+    if (resultElement) {
+        resultElement.textContent = 'Testing POST method...';
+        resultElement.className = '';
+    }
+    
+    // Use a very simple endpoint with minimal content
+    fetch('/simple_hardware_test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ test: 'post-method' })
+    })
+    .then(response => {
+        if (resultElement) {
+            if (response.ok) {
+                resultElement.textContent = `POST test: Success (${response.status})`;
+                resultElement.className = 'success';
+            } else {
+                resultElement.textContent = `POST test: Failed (${response.status} ${response.statusText})`;
+                resultElement.className = 'error';
+            }
+        }
+        return response.text();
+    })
+    .then(text => {
+        console.log("POST test response:", text);
+    })
+    .catch(error => {
+        if (resultElement) {
+            resultElement.textContent = `POST test error: ${error.message}`;
+            resultElement.className = 'error';
+        }
+    });
 }
 
 function initializeHardwareMQTT() {

@@ -169,7 +169,7 @@ def handle_mqtt_message(client, userdata, message):
         print(f"Received non-JSON payload: {payload}")
     except Exception as e:
         print(f"Error processing MQTT message: {e}")
-        
+
 def read_output(process):
     """Read output from the process and store it in buffer"""
     global output_buffer
@@ -949,41 +949,58 @@ def test_hardware():
             "message": f"Error controlling hardware: {str(e)}"
         }), 500
 
-@app.route('/test_hardware_fixed', methods=['POST'])
+@app.route('/test_hardware_fixed', methods=['POST'])  # Make sure POST is explicitly allowed
 def test_hardware_fixed():
     """Test hardware components with better error handling"""
     try:
+        # First check if the request is proper JSON
         if not request.is_json:
             return jsonify({
                 "status": "error",
                 "message": "Request must be JSON"
             }), 400
-
+        
+        # Print the raw request data for debugging
+        print(f"Received test_hardware_fixed request: {request.data}")
+        
+        # Get the component and action from the request
         data = request.json
         component = data.get('component', '')
         action = data.get('action', '')
-
+        
+        print(f"Hardware test request for {component} - {action}")
+        
         if not component or not action:
             return jsonify({
                 "status": "error",
                 "message": "Missing component or action parameter"
             }), 400
-
-        # Example: Handle LED component
-        if component == 'led':
-            if action == 'on':
-                interface_1.led.on()
-                return jsonify({"status": "success", "message": "LED turned on"})
-            elif action == 'off':
-                interface_1.led.off()
-                return jsonify({"status": "success", "message": "LED turned off"})
-            else:
-                return jsonify({"status": "error", "message": f"Unknown LED action: {action}"})
-
-        # Add similar handling for other components (servo, buzzer, etc.)
-        return jsonify({"status": "error", "message": f"Unknown component: {component}"})
+            
+        # Use our hardware bridge module
+        try:
+            from hardware_bridge import control_hardware
+            result = control_hardware(component, action)
+            return jsonify(result)
+        except ImportError as e:
+            # If hardware_bridge is not available, create a fallback implementation
+            print(f"Hardware bridge not available: {e}")
+            
+            # Fallback implementation for testing
+            result = {
+                "status": "success",
+                "message": f"Simulated {component} {action} (hardware bridge not available)",
+                "simulated": True
+            }
+            return jsonify(result)
+            
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error", 
+            "message": f"Error testing hardware: {str(e)}"
+        }), 500
+
 
 @app.route('/debug/sensor')
 def debug_sensor():
