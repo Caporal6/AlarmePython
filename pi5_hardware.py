@@ -30,27 +30,45 @@ COMPONENTS = {
 }
 
 # Try to initialize GPIO
+# Modify the initialization block to add more debugging info
 try:
     if PI5_MODE:
         print("Initializing GPIO using lgpio (Pi 5 compatible)")
-        import lgpio
         
-        # Open the GPIO chip
-        h = lgpio.gpiochip_open(4)  # Use chip 4 for Raspberry Pi 5
+        # Check if lgpio is available
+        try:
+            import lgpio
+            print("Successfully imported lgpio")
+        except ImportError as e:
+            print(f"Failed to import lgpio: {e}")
+            raise
         
-        # Configure pins as outputs
-        lgpio.gpio_claim_output(h, LED_PIN)
-        lgpio.gpio_claim_output(h, BUZZER_PIN)
+        # List available GPIO chips for debugging
+        try:
+            import subprocess
+            result = subprocess.run(['ls', '-la', '/dev/gpiochip*'], capture_output=True, text=True)
+            print(f"Available GPIO chips: {result.stdout}")
+        except Exception as e:
+            print(f"Error listing GPIO chips: {e}")
         
-        # Set all outputs to LOW initially
-        lgpio.gpio_write(h, LED_PIN, 0)
-        lgpio.gpio_write(h, BUZZER_PIN, 0)
-        
-        # Flag that hardware is available
-        HARDWARE_AVAILABLE = True
-        print("GPIO initialization successful")
-    else:
-        print("Not running on Pi 5, hardware control disabled")
+        # Try opening the GPIO chip with error handling
+        try:
+            h = lgpio.gpiochip_open(4)  # Use chip 4 for Raspberry Pi 5
+            print(f"Successfully opened gpiochip4, handle: {h}")
+        except Exception as e:
+            print(f"Error opening gpiochip4: {e}")
+            # Try alternative chip numbers
+            for chip_num in [0, 1, 2, 3]:
+                try:
+                    print(f"Trying gpiochip{chip_num} instead...")
+                    h = lgpio.gpiochip_open(chip_num)
+                    print(f"Successfully opened gpiochip{chip_num}, handle: {h}")
+                    break
+                except Exception as sub_e:
+                    print(f"Error opening gpiochip{chip_num}: {sub_e}")
+            else:
+                print("Could not open any GPIO chip")
+                raise Exception("No accessible GPIO chips found")
 except Exception as e:
     print(f"Error initializing GPIO: {e}")
     HARDWARE_AVAILABLE = False
