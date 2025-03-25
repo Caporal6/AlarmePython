@@ -1123,6 +1123,67 @@ def simple_test():
             "status": "error",
             "message": str(e)
         })
+    
+@app.route('/pi5_test', methods=['GET', 'POST'])
+def pi5_test():
+    """Pi 5 specific hardware test endpoint"""
+    try:
+        # Import the Pi 5 hardware module
+        import pi5_hardware
+        
+        # Check for Pi 5 mode
+        if not pi5_hardware.PI5_MODE:
+            return jsonify({
+                "status": "error",
+                "message": "Not running on a Raspberry Pi 5"
+            })
+            
+        # Check if hardware is available
+        if not pi5_hardware.HARDWARE_AVAILABLE:
+            return jsonify({
+                "status": "error",
+                "message": "Pi 5 hardware control not available",
+                "pi5_mode": True
+            })
+            
+        # For GET requests, just return status
+        if request.method == 'GET':
+            return jsonify({
+                "status": "success",
+                "message": "Pi 5 hardware control is available",
+                "components": list(pi5_hardware.COMPONENTS.keys())
+            })
+            
+        # For POST requests, control a component
+        if request.is_json:
+            data = request.json
+            component = data.get('component', '')
+            action = data.get('action', '')
+            
+            if not component or not action:
+                return jsonify({
+                    "status": "error",
+                    "message": "Missing component or action parameter"
+                })
+                
+            # Control the component
+            result = pi5_hardware.control_component(component, action)
+            return jsonify(result)
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "JSON request required"
+            })
+    except ImportError:
+        return jsonify({
+            "status": "error",
+            "message": "Pi 5 hardware module not available"
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        })
 
 @app.route('/pi5_direct_test', methods=['GET', 'POST'])
 def pi5_direct_test():
