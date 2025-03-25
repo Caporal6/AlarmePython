@@ -1,7 +1,12 @@
 // hardware.js - Enhanced hardware communication for the web client
 // Add this file to your static/js folder and include it in your HTML
 
-let hardwareAvailable = false;
+if (typeof hardwareAvailable === 'undefined') {
+    let hardwareAvailable = false;
+} else {
+    // Just use the existing variable
+    console.log("Using existing hardwareAvailable variable");
+}
 let mqttHardwareClient = null;
 let sensorUpdateInterval = null;
 let sensorData = {
