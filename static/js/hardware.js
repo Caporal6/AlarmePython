@@ -8,7 +8,12 @@ if (typeof hardwareAvailable === 'undefined') {
     console.log("Using existing hardwareAvailable variable");
 }
 let mqttHardwareClient = null;
-let sensorUpdateInterval = null;
+if (typeof sensorUpdateInterval === 'undefined') {
+    let sensorUpdateInterval = null;
+}else {
+    // Just use the existing variable
+    console.log("Using existing sensorUpdateInterval variable");
+}
 let sensorData = {
     temperature: null,
     humidity: null,
