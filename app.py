@@ -47,6 +47,22 @@ TOPIC_ALARM_TOGGLED = "alarm/toggled"
 TOPIC_ALARM_STATE = "alarm/state"
 TOPIC_OUTPUT = "alarm/output"
 
+PI5_MODE = False
+try:
+    with open('/proc/device-tree/model', 'r') as f:
+        model = f.read()
+        PI5_MODE = 'Raspberry Pi 5' in model
+        print(f"Running on: {model.strip()}")
+except:
+    print("Could not determine Raspberry Pi model")
+
+# Pass this information to templates
+@app.context_processor
+def inject_pi_info():
+    return {
+        "pi5_mode": PI5_MODE
+    }
+
 @mqtt_client.on_connect()
 def handle_connect(client, userdata, flags, rc):
     """Called when the MQTT client connects to the broker"""
@@ -919,8 +935,13 @@ def sensor_data():
 
 @app.route('/test_hardware', methods=['POST'])
 def test_hardware():
-    """Test hardware components with robust error handling"""
+    """Test hardware components with Pi 5 support"""
     try:
+        # Debug info
+        print(f"Request method: {request.method}")
+        print(f"Content-Type: {request.headers.get('Content-Type')}")
+        print(f"Request data: {request.data}")
+        
         if not request.is_json:
             return jsonify({
                 "status": "error",
@@ -928,6 +949,8 @@ def test_hardware():
             }), 400
 
         data = request.json
+        print(f"Parsed JSON: {data}")
+        
         component = data.get('component', '')
         action = data.get('action', '')
 
@@ -937,17 +960,78 @@ def test_hardware():
                 "message": "Missing component or action parameter"
             }), 400
 
-        # Use our hardware bridge module
-        from hardware_bridge import control_hardware
-        result = control_hardware(component, action)
-        return jsonify(result)
+        # Use our hardware bridge
+        try:
+            from hardware_bridge import control_hardware, PI5_MODE
+            result = control_hardware(component, action)
+            return jsonify(result)
+        except ImportError as e:
+            return jsonify({
+                "status": "error",
+                "message": f"Hardware bridge not available: {str(e)}"
+            })
+            
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({
             "status": "error", 
-            "message": f"Error controlling hardware: {str(e)}"
+            "message": f"Error: {str(e)}"
         }), 500
+    
+@app.route('/pi5_status')
+def pi5_status():
+    """Return Pi 5 specific hardware information"""
+    try:
+        from hardware_bridge import PI5_MODE
+        
+        status = {
+            "pi5_detected": PI5_MODE,
+            "gpio_lib_status": {}
+        }
+        
+        # Check RPi.GPIO
+        try:
+            import RPi.GPIO as GPIO
+            status["gpio_lib_status"]["RPi.GPIO"] = "Available"
+            # Get GPIO version
+            status["gpio_lib_status"]["RPi.GPIO_version"] = GPIO.VERSION
+        except ImportError:
+            status["gpio_lib_status"]["RPi.GPIO"] = "Not available"
+        except Exception as e:
+            status["gpio_lib_status"]["RPi.GPIO_error"] = str(e)
+            
+        # Check gpiozero
+        try:
+            import gpiozero
+            status["gpio_lib_status"]["gpiozero"] = "Available"
+            status["gpio_lib_status"]["gpiozero_version"] = gpiozero.__version__
+        except ImportError:
+            status["gpio_lib_status"]["gpiozero"] = "Not available"
+        except Exception as e:
+            status["gpio_lib_status"]["gpiozero_error"] = str(e)
+            
+        # Check for pinctrl tools
+        try:
+            import subprocess
+            result = subprocess.run(["which", "pinctrl"], 
+                                  capture_output=True, text=True)
+            status["pinctrl_available"] = result.returncode == 0
+            
+            if status["pinctrl_available"]:
+                # Try to get pinctrl version
+                version_result = subprocess.run(["pinctrl", "--version"],
+                                             capture_output=True, text=True)
+                status["pinctrl_version"] = version_result.stdout.strip()
+        except Exception as e:
+            status["pinctrl_error"] = str(e)
+            
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        })
 
 @app.route('/test_hardware_fixed', methods=['GET', 'POST'])  # Make sure POST is allowed
 def test_hardware_fixed():
@@ -998,18 +1082,17 @@ def test_hardware_fixed():
             "message": f"Error: {str(e)}"
         }), 500
 
-@app.route('/simple_test', methods=['POST', 'GET'])
+@app.route('/simple_test', methods=['GET', 'POST'])
 def simple_test():
-    """Ultra simple test endpoint that always works"""
+    """Ultra simple test endpoint"""
     try:
-        # For GET requests
         if request.method == 'GET':
             return jsonify({
                 "status": "success",
-                "message": "Simple test endpoint ready (use POST for testing)",
+                "message": "Simple test endpoint ready"
             })
             
-        # For POST requests - try multiple ways to get the data
+        # Parse data - accept either JSON or form data
         component = "unknown"
         action = "unknown"
         
@@ -1020,13 +1103,21 @@ def simple_test():
         elif request.form:
             component = request.form.get('component', component)
             action = request.form.get('action', action)
-        
-        # Always return success for testing purposes
-        return jsonify({
-            "status": "success",
-            "message": f"Simulated {component} {action} action",
-            "simulated": True
-        })
+            
+        print(f"Simple test request for {component} action {action}")
+            
+        # Try hardware bridge if available
+        try:
+            from hardware_bridge import control_hardware
+            return jsonify(control_hardware(component, action))
+        except ImportError:
+            # Fallback to simulated response
+            return jsonify({
+                "status": "success",
+                "message": f"Simulated {component} {action} action",
+                "simulated": True
+            })
+            
     except Exception as e:
         return jsonify({
             "status": "error",
