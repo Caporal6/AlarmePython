@@ -14,7 +14,10 @@ print(f"Script directory: {script_dir}")
 try:
     print("\nChecking gpiozero installation...")
     import gpiozero
-    print(f"✓ gpiozero version: {gpiozero.__version__}")
+    try:
+        print(f"✓ gpiozero version: {gpiozero.__version__}")
+    except AttributeError:
+        print(f"✓ gpiozero is installed (version attribute not available)")
     
     # Check if we're running on a Pi
     print("\nChecking if we're on a Raspberry Pi...")

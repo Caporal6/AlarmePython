@@ -7,45 +7,51 @@ import random
 import subprocess
 import importlib.util
 
-# Add at the top of hardware_bridge.py
-PI5_MODE = False
+# Add this at the beginning of the file to properly set the hardware availability flag
+
+# Use simulation mode if environment variable is set
+import os
+SIMULATION_MODE = os.environ.get('SIMULATE_HARDWARE', '0') == '1'
+
+# Try to detect hardware
+HARDWARE_AVAILABLE = False
+HARDWARE_COMPONENTS = {}
+
+# Try the Pi 5 hardware first if it's available
 try:
-    with open('/proc/device-tree/model', 'r') as f:
-        model = f.read()
-        PI5_MODE = 'Raspberry Pi 5' in model
-        print(f"System model: {model.strip()}")
-except:
+    from pi5_hardware import HARDWARE_AVAILABLE as PI5_HARDWARE_AVAILABLE, COMPONENTS
+    if PI5_HARDWARE_AVAILABLE:
+        print("Using Pi 5 hardware interface")
+        HARDWARE_AVAILABLE = True
+        HARDWARE_COMPONENTS = COMPONENTS
+except ImportError:
     pass
 
-print(f"Pi 5 mode: {PI5_MODE}")
-
-# If on Pi 5, try direct GPIO access first
-if PI5_MODE:
+# If Pi 5 hardware is not available, try the interface_1 module
+if not HARDWARE_AVAILABLE:
     try:
-        import RPi.GPIO as GPIO
-        print("Successfully imported RPi.GPIO for Pi 5")
-        
-        # Set up GPIO
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
-        
-        # Define pin mappings - adjust these to match your hardware
-        LED_PIN = 6
-        BUZZER_PIN = 18
-        
-        # Set up pins
-        GPIO.setup(LED_PIN, GPIO.OUT)
-        GPIO.setup(BUZZER_PIN, GPIO.OUT)
-        
-        # Set all outputs to LOW initially
-        GPIO.output(LED_PIN, GPIO.LOW)
-        GPIO.output(BUZZER_PIN, GPIO.LOW)
-        
-        # Flag that hardware is available
-        HARDWARE_AVAILABLE = True
-        print("Direct GPIO access successful")
-    except Exception as e:
-        print(f"Direct GPIO access failed: {e}")
+        import interface_1
+        if hasattr(interface_1, 'HARDWARE_AVAILABLE') and interface_1.HARDWARE_AVAILABLE:
+            print("Using interface_1 hardware interface")
+            HARDWARE_AVAILABLE = True
+            
+            # Map components
+            HARDWARE_COMPONENTS = {}
+            if hasattr(interface_1, 'led'):
+                HARDWARE_COMPONENTS['led'] = 'LED pin'
+            if hasattr(interface_1, 'buzzer'):
+                HARDWARE_COMPONENTS['buzzer'] = 'Buzzer pin'
+            if hasattr(interface_1, 'servo'):
+                HARDWARE_COMPONENTS['servo'] = 'Servo pin'
+    except ImportError:
+        pass
+
+# Check if we have any hardware available
+if not HARDWARE_AVAILABLE:
+    if SIMULATION_MODE:
+        print("Hardware not detected, using simulation mode")
+    else:
+        print("Warning: No hardware interfaces available")
 
 # Detect if we're on a Pi 5
 def is_pi5():
@@ -57,8 +63,6 @@ def is_pi5():
         return False
 
 # Flag to track hardware availability
-HARDWARE_AVAILABLE = False
-HARDWARE_COMPONENTS = {}
 PI5_MODE = is_pi5()
 
 print(f"Detected platform: {'Raspberry Pi 5' if PI5_MODE else 'Non-Pi 5 System'}")
@@ -196,64 +200,136 @@ def get_sensor_data():
     
     return data
 
-# Function to safely control hardware components
+# Control hardware function
 def control_hardware(component, action):
-    """Safely control hardware components with error handling"""
-    result = {
-        "status": "error",
-        "message": f"Unknown component or action: {component} / {action}",
-        "pi5_mode": PI5_MODE
-    }
-    
-    if not HARDWARE_AVAILABLE:
+    """Control hardware components with appropriate interface"""
+    # If simulation mode is forced, always use simulation
+    if SIMULATION_MODE:
         return {
-            "status": "error",
-            "message": "Hardware not available. Running in simulation mode.",
-            "pi5_mode": PI5_MODE
+            "status": "success", 
+            "message": f"{component} {action} (simulated)",
+            "simulated": True
         }
     
+    # First try Pi 5 hardware
     try:
-        # LED control
-        if component == 'led':
-            led = HARDWARE_COMPONENTS.get('led')
-            if not led:
-                raise Exception("LED component not available")
-                
-            if action == 'on':
-                led.on()
-                result = {"status": "success", "message": "LED turned on", "pi5_mode": PI5_MODE}
-            elif action == 'off':
-                led.off()
-                result = {"status": "success", "message": "LED turned off", "pi5_mode": PI5_MODE}
-            else:
-                result = {"status": "error", "message": f"Unknown LED action: {action}", "pi5_mode": PI5_MODE}
-        
-        # Buzzer control
-        elif component == 'buzzer':
-            buzzer = HARDWARE_COMPONENTS.get('buzzer')
-            if not buzzer:
-                raise Exception("Buzzer component not available")
-                
-            if action == 'on':
-                buzzer.on()
-                # Schedule buzzer to turn off after a second
-                import threading
-                threading.Timer(1.0, lambda: buzzer.off()).start()
-                result = {"status": "success", "message": "Buzzer beeped", "pi5_mode": PI5_MODE}
-            elif action == 'off':
-                buzzer.off()
-                result = {"status": "success", "message": "Buzzer turned off", "pi5_mode": PI5_MODE}
-            else:
-                result = {"status": "error", "message": f"Unknown buzzer action: {action}", "pi5_mode": PI5_MODE}
-                
-    except Exception as e:
-        result = {
-            "status": "error",
-            "message": f"Error controlling {component}: {str(e)}",
-            "pi5_mode": PI5_MODE
-        }
+        from pi5_hardware import control_component, HARDWARE_AVAILABLE as PI5_AVAILABLE
+        if PI5_AVAILABLE:
+            return control_component(component, action)
+    except ImportError:
+        pass
     
-    return result
+    # Then try interface_1
+    try:
+        import interface_1
+        if not hasattr(interface_1, 'HARDWARE_AVAILABLE') or not interface_1.HARDWARE_AVAILABLE:
+            return {
+                "status": "error",
+                "message": "Hardware not available in interface_1"
+            }
+        
+        if component == 'led':
+            if not hasattr(interface_1, 'led'):
+                return {"status": "error", "message": "LED not available"}
+            
+            if action == 'on':
+                interface_1.led.on()
+                return {"status": "success", "message": "LED turned on"}
+            elif action == 'off':
+                interface_1.led.off()
+                return {"status": "success", "message": "LED turned off"}
+            else:
+                return {"status": "error", "message": f"Unknown action for LED: {action}"}
+                
+        elif component == 'buzzer':
+            if not hasattr(interface_1, 'buzzer'):
+                return {"status": "error", "message": "Buzzer not available"}
+                
+            if action == 'on':
+                interface_1.buzzer.on()
+                import threading
+                import time
+                threading.Timer(1.0, lambda: interface_1.buzzer.off()).start()
+                return {"status": "success", "message": "Buzzer beeped"}
+            elif action == 'off':
+                interface_1.buzzer.off()
+                return {"status": "success", "message": "Buzzer turned off"}
+            else:
+                return {"status": "error", "message": f"Unknown action for buzzer: {action}"}
+                
+        elif component == 'servo':
+            if not hasattr(interface_1, 'servo'):
+                return {"status": "error", "message": "Servo not available"}
+                
+            if action == 'sweep':
+                import threading
+                def sweep_servo():
+                    import time
+                    for angle in range(0, 181, 10):
+                        interface_1.servo.angle = angle
+                        time.sleep(0.05)
+                    for angle in range(180, -1, -10):
+                        interface_1.servo.angle = angle
+                        time.sleep(0.05)
+                
+                threading.Thread(target=sweep_servo, daemon=True).start()
+                return {"status": "success", "message": "Servo sweeping"}
+            else:
+                interface_1.servo.angle = 90
+                return {"status": "success", "message": "Servo centered"}
+                
+        return {"status": "error", "message": f"Unknown component: {component}"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": f"Error controlling hardware: {str(e)}"}
+    
+    # If we reach here, nothing worked
+    return {
+        "status": "error",
+        "message": "No hardware interfaces available",
+        "simulated": True
+    }
+
+# Function to get sensor data
+def get_sensor_data():
+    """Get sensor data from available hardware or simulate if not available"""
+    # If simulation mode is forced, always use simulation
+    if SIMULATION_MODE:
+        return generate_simulated_sensor_data()
+    
+    # Try interface_1 first
+    try:
+        import interface_1
+        if hasattr(interface_1, 'get_sensor_data'):
+            return interface_1.get_sensor_data()
+    except ImportError:
+        pass
+    
+    # Try pi5_hardware
+    try:
+        from pi5_hardware import get_sensor_data as pi5_get_sensor_data
+        return pi5_get_sensor_data()
+    except ImportError:
+        pass
+    
+    # Fall back to simulation
+    return generate_simulated_sensor_data()
+
+def generate_simulated_sensor_data():
+    """Generate simulated sensor data"""
+    import random
+    import time
+    
+    return {
+        "hardware_available": HARDWARE_AVAILABLE,
+        "temperature": random.uniform(20.0, 25.0),
+        "humidity": random.uniform(40.0, 60.0),
+        "distance": random.uniform(30.0, 100.0),
+        "movement_detected": random.choice([True, False]),
+        "timestamp": time.time(),
+        "simulated": True
+    }
 
 # For testing
 if __name__ == "__main__":
