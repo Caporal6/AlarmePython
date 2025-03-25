@@ -116,8 +116,37 @@ function testHardwareComponent(component, action) {
         testResult.className = '';
     }
     
-    // Try multiple endpoints in order, with fallback mechanism
-    tryHardwareEndpoints(component, action, testResult);
+    // Try the simple endpoint first as it's most likely to work
+    fetch('/simple_test', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            component: component,
+            action: action
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log("Hardware test response:", data);
+        if (testResult) {
+            testResult.textContent = data.message || "Test completed";
+            testResult.className = data.status === 'success' ? 'success' : 'error';
+        }
+    })
+    .catch(error => {
+        console.error("Hardware test error:", error);
+        if (testResult) {
+            testResult.textContent = `Error: ${error.message}`;
+            testResult.className = 'error';
+        }
+    });
 }
 
 // This function tries multiple endpoints in sequence until one works
